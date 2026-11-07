@@ -22,8 +22,8 @@ This roadmap is a dependency chain, not a date plan. It records the gate the mas
 
 Do **only** after Gate 0 approval:
 
-- [ ] Skill audit → `docs/architecture/INSTALLED_SKILLS.md` (fill the deferred table)
-- [ ] `AGENTS.md`, `BACKEND_TEMP.md`, `README.md`, `docs/README.md`, `.gitignore`
+- [x] Skill audit → `docs/architecture/INSTALLED_SKILLS.md` (fill the deferred table)
+- [x] `AGENTS.md`, `BACKEND_TEMP.md`, `README.md`, `docs/README.md`, `.gitignore`
 
 ## Gate 2 — Frontend (mock data)
 
