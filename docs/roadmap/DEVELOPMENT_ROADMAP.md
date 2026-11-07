@@ -1,13 +1,13 @@
 # Development Roadmap
 
-Status: **planning only — no implementation started** · 2026-11-07
+Status: **Gate 0 approved, Gate 2 built (manual verification pending)** · 2026-11-08
 
 This roadmap is a dependency chain, not a date plan. It records the gate the master directive enforces:
 **no frontend implementation, then no backend implementation, without explicit user approval.**
 
 ---
 
-## Gate 0 — Planning (current)
+## Gate 0 — Planning (approved 2026-11-08)
 
 - [x] Discovery, discovery report
 - [x] CPNS 2026 research + evidence record
@@ -16,7 +16,7 @@ This roadmap is a dependency chain, not a date plan. It records the gate the mas
 - [x] Product docs (PRD, user stories, journeys, feature matrix, MVP scope)
 - [x] AI docs, architecture docs, decisions, backend + frontend specs
 - [x] Audit register (open findings → this doc's report)
-- [ ] **Gate: user approval of the full documentation set**
+- [x] **Gate: user approval of the full documentation set** (2026-11-08)
 
 ## Gate 1 — Skill audit + root files
 
@@ -29,7 +29,7 @@ Do **only** after Gate 0 approval:
 
 Do **only** after Gate 1:
 
-- [ ] Frontend implementation against documented contracts, on mock data
+- [x] Frontend implementation against documented contracts, on mock data
 - [ ] Manual verification by the user (ADR-007: no automated frontend tests)
 
 ## Gate 3 — Backend
