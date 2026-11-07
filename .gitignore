@@ -1,0 +1,39 @@
+# Local, single-user app — ignore nothing sensitive is committed.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / frontend (candidate React + Vite + Tailwind)
+node_modules/
+dist/
+.vite/
+
+# Python (migration/utility scripts, if any)
+__pycache__/
+*.pyc
+.venv/
+
+# Build artifacts
+*.log
+*.sqlite3
+*.sqlite3-journal
+
+# Secrets — never committed, regardless of secret-store backend
+.env
+.env.*
+*.key
+*.pem
+secrets/
+secret_ref/
+
+# Editor/IDE
+.idea/
+.vscode/
+
+# Local research artifacts (scraped evidence, vendored pypdf)
+.research/
+
+# Graphify knowledge-graph cache (regenerate locally)
+graphify-out/
