@@ -1,13 +1,14 @@
 # Frontend
 
-**Not started.** The frontend is implemented only after the documentation set is approved and the
-frontend gate opens ([docs/roadmap/DEVELOPMENT_ROADMAP.md](../docs/roadmap/DEVELOPMENT_ROADMAP.md)
-Gate 2).
+**Gate 2 built, mock data only.** Commands: `npm install`, `npm run dev`, `npm run typecheck`,
+`npm run build`, `npm run fixtures`. No backend calls.
 
-When it starts, it follows:
+It follows:
 
 - [docs/frontend/FRONTEND_IMPLEMENTATION_PLAN.md](../docs/frontend/FRONTEND_IMPLEMENTATION_PLAN.md)
+- [docs/frontend/FRONTEND_API_MAPPING.md](../docs/frontend/FRONTEND_API_MAPPING.md)
 - [docs/frontend/FRONTEND_DATA_CONTRACTS.md](../docs/frontend/FRONTEND_DATA_CONTRACTS.md)
 - [docs/frontend/FRONTEND_PAGE_SPECIFICATIONS.md](../docs/frontend/FRONTEND_PAGE_SPECIFICATIONS.md)
+- [docs/frontend/FRONTEND_GAP_REGISTER.md](../docs/frontend/FRONTEND_GAP_REGISTER.md)
 
-This directory intentionally contains no source code.
+GAP-blocked screens and their workarounds are recorded in that last file.
