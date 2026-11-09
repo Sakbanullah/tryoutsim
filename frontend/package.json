@@ -1,0 +1,30 @@
+{
+  "name": "tryoutsim-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "TryoutSim frontend — Gate 2, mock data only. No backend calls.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "fixtures": "node --experimental-strip-types scripts/check-fixtures.ts && node scripts/check-mock-routes.ts && node --experimental-strip-types scripts/check-e78-selfcheck.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.2.8",
+    "@fontsource-variable/plus-jakarta-sans": "5.2.8",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router-dom": "7.9.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.5",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "6.2.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "5.9.3",
+    "vite": "8.3.6"
+  }
+}
