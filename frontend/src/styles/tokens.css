@@ -1,0 +1,268 @@
+/* Design tokens — docs/frontend/DESIGN_SYSTEM.md §2. One definition, referenced everywhere.
+ *
+ * This file holds ONLY what Tailwind utilities cannot express:
+ *   · the token values (@theme),
+ *   · the base element styles (body, headings, heading type scale),
+ *   · the page measure and reduced-motion guard.
+ * Component styling lives in Tailwind utility classes on the React components.
+ */
+
+@import 'tailwindcss';
+
+/* Dark mode is class-based: the `dark` class on <html>, set by the theme toggle. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-display: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+
+  /* Type scale (DESIGN_SYSTEM §3). */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* Page measure (desktop-first): `max-w-page` for forms and reading, `max-w-wide` for dashboards. */
+  --container-page: 1180px;
+  --container-wide: 1560px;
+  --container-reading: 760px;
+
+  --elev-1: 0 1px 2px rgba(31, 49, 87, 0.05), 0 1px 3px rgba(31, 49, 87, 0.07);
+  --elev-2: 0 2px 6px rgba(31, 49, 87, 0.06), 0 12px 28px rgba(31, 49, 87, 0.09);
+  --elev-3: 0 18px 48px rgba(31, 49, 87, 0.16);
+
+  --shadow-panel: var(--elev-1);
+  --shadow-panel-hover: var(--elev-2);
+  --shadow-float: var(--elev-3);
+  --shadow-control-focus: 0 0 0 3px var(--primary-wash);
+  --shadow-primary: 0 1px 2px rgba(31, 49, 87, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+:root {
+  /* surfaces — soft blue-tinted page, white cards, so a panel reads as a raised object */
+  --canvas: #f3f5f9;
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: #eff3f9;
+  --ink: #1f3157;
+  --muted: #5a6c8c;
+  --border: #dbe4f3;
+  --border-strong: #c4d2ea;
+
+  /*
+   * The one panel that is dark in both themes (the result total card). `--ink` cannot fill it: in
+   * dark mode `--ink` is near-white, so light-on-light. Content therefore uses fixed light values.
+   */
+  --ink-panel: #1f3157;
+  --ink-panel-border: #3a4d78;
+  --ink-panel-text: #ffffff;
+  --ink-panel-muted: #d5ddea;
+  --ink-panel-line: #465b87;
+  --ink-panel-fill: #e6edff;
+
+  /* primary — bright blue, its hover, and the pale wash used for selected/active surfaces */
+  --primary: #3467f5;
+  --primary-hover: #2455dd;
+  --primary-ink: #0a45d6;
+  --primary-wash: #eaf0ff;
+
+  /* accents */
+  --lavender: #edeaff;
+  --lavender-ink: #4a3bb5;
+  --sunny: #fff0be;
+  --sunny-ink: #7a5200;
+
+  /* semantic */
+  --success: #0f7b57;
+  --success-wash: #ddf6ec;
+  --warning: #9a5b00;
+  --warning-wash: #fff1d4;
+  --danger: #b8233b;
+  --danger-wash: #fde7eb;
+  --info: #1f4bc0;
+  --info-wash: #e6edff;
+
+  /* Tint borders that sit on the coloured washes above. */
+  --primary-line: #d5e1ff;
+  --lavender-line: #ddd6ff;
+  --sunny-line: #f2de9c;
+
+  /* Page wash gradient for hero panels; `--hero-from` is the light stop. */
+  --hero-from: #eef3ff;
+  --hero-to: #ffffff;
+
+  color-scheme: light;
+}
+
+/* Dark mode: opt-in only, set by the `dark` class on <html> (theme toggle). Never follows the OS. */
+:root.dark {
+  --canvas: #0e1220;
+  --bg: #12141b;
+  --surface: #1b1e27;
+  --surface-muted: #232733;
+  --ink: #e9ecf3;
+  --muted: #a0a8b8;
+  --border: #2c3140;
+  --border-strong: #3a4152;
+
+  /* The ink panel is identical in both themes; it is dark on purpose. */
+  --ink-panel: #1f3157;
+  --ink-panel-border: #3a4d78;
+  --ink-panel-text: #ffffff;
+  --ink-panel-muted: #d5ddea;
+  --ink-panel-line: #465b87;
+  --ink-panel-fill: #e6edff;
+  --primary: #6c9bff;
+  --primary-hover: #8bb0ff;
+  --primary-ink: #b9cfff;
+  --primary-wash: #24365e;
+  --lavender: #2a2746;
+  --lavender-ink: #b9b0ff;
+  --sunny: #3a3016;
+  --sunny-ink: #f0cc72;
+  --success: #4cc39a;
+  --success-wash: #16362c;
+  --warning: #e2a33c;
+  --warning-wash: #3a2d12;
+  --danger: #ff7d8b;
+  --danger-wash: #3d1a20;
+  --info: #93a9ff;
+  --info-wash: #212c53;
+
+  --primary-line: #30508f;
+  --lavender-line: #403a6b;
+  --sunny-line: #5c4a1c;
+
+  --hero-from: #1a2135;
+  --hero-to: #12141b;
+
+  color-scheme: dark;
+}
+
+/* Colour utilities resolve to the design tokens: `bg-surface`, `text-ink`, `border-border`, … */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink-panel: var(--ink-panel);
+  --color-ink-panel-border: var(--ink-panel-border);
+  --color-ink-panel-text: var(--ink-panel-text);
+  --color-ink-panel-muted: var(--ink-panel-muted);
+  --color-ink-panel-line: var(--ink-panel-line);
+  --color-ink-panel-fill: var(--ink-panel-fill);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-wash: var(--primary-wash);
+  --color-lavender: var(--lavender);
+  --color-lavender-ink: var(--lavender-ink);
+  --color-sunny: var(--sunny);
+  --color-sunny-ink: var(--sunny-ink);
+  --color-success: var(--success);
+  --color-success-wash: var(--success-wash);
+  --color-warning: var(--warning);
+  --color-warning-wash: var(--warning-wash);
+  --color-danger: var(--danger);
+  --color-danger-wash: var(--danger-wash);
+  --color-info: var(--info);
+  --color-info-wash: var(--info-wash);
+  --color-primary-line: var(--primary-line);
+  --color-lavender-line: var(--lavender-line);
+  --color-sunny-line: var(--sunny-line);
+}
+
+@layer base {
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    color: var(--ink);
+    line-height: 1.18;
+    letter-spacing: -0.018em;
+    font-weight: 700;
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  h3 {
+    font-size: 17px;
+  }
+
+  /* Keyboard focus is always visible (FRONTEND_ACCESSIBILITY §2); components may refine it. */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /*
+   * WCAG 2.2 AA "focus not obscured": the fixed theme toggle (top-right) and the bottom dock are
+   * always on screen, so a focused control scrolled to an edge must clear them.
+   */
+  html {
+    scroll-padding-top: 88px;
+    scroll-padding-bottom: 112px;
+  }
+}
+
+/* The only animation vocabulary the components reference: an entrance that respects motion settings. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-rise {
+  animation: rise 260ms cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+@utility animate-fade {
+  animation: rise 200ms ease both;
+}
+
+/* Numeric readouts: one column of figures that lines up. */
+@utility tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
