@@ -63,7 +63,8 @@ export type ApiClient = {
 
   sessions(mode?: 'tryout' | 'latihan'): Promise<Result<SessionSummary[]>>
   session(id: string): Promise<Result<SessionDetail>>
-  saveAnswers(id: string, body: AnswersPatch): Promise<Result<{ savedAt: string }>>
+  /** `elapsedActiveMs` is the answer's cumulative active time (API_SPECIFICATION §7.5); omit it while no clock is wired. */
+  saveAnswers(id: string, body: AnswersPatch, elapsedActiveMs?: number): Promise<Result<{ savedAt: string }>>
   submitSession(id: string, body: AnswersPatch): Promise<Result<ScoreResult>>
   rescoreSession(id: string): Promise<Result<ScoreResult>>
   sessionResult(id: string): Promise<Result<ScoreResult>>

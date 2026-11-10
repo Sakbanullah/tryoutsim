@@ -218,7 +218,6 @@ function score(session: Session): SessionScoreResult {
 const LIFECYCLE_COUNT = (lifecycle: Lifecycle) => QUESTIONS.filter((q) => q.lifecycle === lifecycle).length
 
 const bootstrap = (): BootstrapResponse => ({
-  examConfigs: CONFIGS,
   providers: PROVIDERS,
   questionBankSummary: {
     total: QUESTIONS.length,
@@ -267,7 +266,8 @@ function openSession(configId: string, mode: 'tryout' | 'practice', roster: Sess
   const sessionId = `ses-${Date.now().toString(36)}-${sessions.size}`
   const startedAt = new Date().toISOString()
   sessions.set(sessionId, {
-    detail: { sessionId, configId, mode, status: 'open', questions: roster },
+    // No countdown in the mock (no deadline in its contract), so `durationMs` is null and the clock never expires.
+    detail: { sessionId, configId, mode, status: 'open', durationMs: null, activeMs: 0, runningSince: startedAt, expired: false, questions: roster },
     answers: new Map(),
     summary: { id: sessionId, mode: mode === 'tryout' ? 'tryout' : 'latihan', status: 'open', packageId, startedAt, submittedAt: null, totalEarned: null, totalPossible: null },
   })

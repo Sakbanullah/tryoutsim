@@ -328,6 +328,8 @@ export type Outcome<T> =
   | { kind: 'notFound' }
   | { kind: 'conflict'; reason: string }
   | { kind: 'unavailable'; reason: string }
+  /** The route exists in `API_ENDPOINTS` but the backend does not serve it yet: no retry will help. */
+  | { kind: 'notImplemented'; route: string }
 
 /**
  * ── GAP types (FRONTEND_DATA_CONTRACTS §6) ──────────────────────────────────────────────
@@ -346,18 +348,33 @@ export type SessionQuestion = {
   options: Array<{ key: 'A' | 'B' | 'C' | 'D' | 'E'; text: string }>
   provenanceKind: Provenance['kind']
   sourceYear?: number
+  /** The saved answer and its flag, as stored (`GET /sessions/:id`, repositories/session `loadRunner`). */
+  selected: string | null
+  flagged: boolean
+  /** Time already recorded on this question; evidence only, never a scoring input (§8.1). */
+  elapsedActiveMs: number
 }
 
-/** GAP-F2 — session detail without answers. */
+/** Session detail without keys or explanations. Clock fields are server-computed (§8.1); `expired` is never decided here. */
 export type SessionDetail = {
   sessionId: string
   configId: string
   mode: 'tryout' | 'practice'
   status: SessionStatus
+  /** The session's time limit, or `null` when it has none. */
+  durationMs: number | null
+  /** Accumulated active time; not a remaining-time countdown. */
+  activeMs: number
+  /** When the clock started running, or `null` while paused. */
+  runningSince: string | null
+  expired: boolean
   questions: SessionQuestion[]
 }
 
-/** GAP-F3 — autosave request. */
+/**
+ * Autosave request. The backend takes one answer per `PATCH` with its cumulative `elapsedActiveMs`
+ * (API_SPECIFICATION §7.5); the client sends the last entry and the elapsed value passed beside it.
+ */
 export type AnswersPatch = {
   answers: Array<{ questionId: string; selectedOption: string | null }>
 }
@@ -447,7 +464,9 @@ export type Package = {
   version: number
   definition: PackageDefinition
   availability: PackageAvailability
+  /** The config pin, adapted from the backend's `examConfigId`; absent when the version pins none. */
   configId?: string
+  examConfigVersion?: number | null
   retiredAt: string | null
 }
 
@@ -457,6 +476,9 @@ export type SessionSummary = {
   mode: 'tryout' | 'latihan'
   status: 'open' | 'submitted' | 'scored' | 'blocked'
   packageId: string
+  /** The package version the session was frozen on, and the config it was scored under. */
+  packageVersion?: number
+  configId?: string
   startedAt: string
   submittedAt: string | null
   totalEarned: number | null
@@ -585,9 +607,16 @@ export type PackageDraft = {
   definition: PackageDefinition
 }
 
-/** GAP-F9 — bootstrap beyond the two typed arrays. */
+/**
+ * `GET /bootstrap` — the read-only snapshot the app paints itself from. It carries no `examConfigs`: the learner
+ * never selects a config (PACKAGE_SPECIFICATION §3, decision B3). `taxonomy`, `packages`, `notifications` and
+ * `defaults` arrive in the payload; their inner shapes are not in the frontend contracts (GAP), so they stay `unknown`.
+ */
 export type BootstrapResponse = {
-  examConfigs: ExamConfig[]
+  taxonomy?: unknown
+  packages?: unknown
+  notifications?: unknown
+  defaults?: unknown
   providers: ProviderView[]
   questionBankSummary: { total: number; active: number; byLifecycle: Record<Lifecycle, number> }
   analyticsReady: boolean

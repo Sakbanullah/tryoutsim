@@ -20,6 +20,9 @@ export const EXAM_ROSTER: SessionQuestion[] = QUESTIONS.filter((q) => q.lifecycl
   asset: q.asset,
   options: q.options,
   provenanceKind: q.provenance.kind,
+  selected: null,
+  flagged: false,
+  elapsedActiveMs: 0,
 }))
 
 /** A short weakness drill: three items across the tested areas (GAP-F12 supplies the real shape). */

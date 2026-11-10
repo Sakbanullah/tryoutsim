@@ -14,6 +14,8 @@ export type Failure =
   | { status: 426; code: 'CONTRACT_MISMATCH'; expected: string; actual: string }
   | { status: 429 | 502 | 504; code: ErrorCode; message: string; retryAfterMs: number | null }
   | { status: 0; code: 'NETWORK'; message: string }
+  /** A documented route the backend does not serve yet (plan Tahap A). Distinct from `NETWORK`: retrying cannot help. */
+  | { status: 0; code: 'UNSUPPORTED'; message: string }
 
 const BLOCKING = [
   'APPROVAL_MISSING',
@@ -43,6 +45,9 @@ export function toOutcome<T>(failure: Failure): Outcome<T> {
   if (failure.status === 422) return { kind: 'preflight', errors: failure.errors }
   if (failure.status === 426) {
     return { kind: 'contract', expected: failure.expected, actual: failure.actual }
+  }
+  if (failure.status === 0 && failure.code === 'UNSUPPORTED') {
+    return { kind: 'notImplemented', route: failure.message }
   }
   if (failure.status === 0) return { kind: 'unavailable', reason: failure.message }
   if (failure.status === 429 || failure.status === 502 || failure.status === 504) {
