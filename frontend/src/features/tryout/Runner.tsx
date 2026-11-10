@@ -7,14 +7,15 @@ import { useApi } from '../shared/useApi'
 import { useShell } from '../../state/shell'
 import { Badge, Button, Notice, Panel, cx } from '../../ui/ui'
 import { ProvenanceBadge } from '../shared/badges'
-import { testName } from '../shared/format'
+import { difficultyLabel, testName } from '../shared/format'
 import { IconCheck, IconChevronLeft, IconChevronRight, IconFlag } from '../../ui/icons'
 
 /**
  * Ujian berlangsung (`/tryout/sesi/:id`, `/latihan/sesi/:id`) — FRONTEND_EXAM_FLOW.
  *
  * Rules the code enforces:
- * - No timer. The contract carries no deadline (GAP-F5, U-F1), so none is invented.
+ * - The clock is server state (FRONTEND_EXAM_FLOW §6): remaining = `durationMs − activeMs` when a duration is set,
+ *   otherwise elapsed active time with "tanpa batas waktu". The client never decides expiry from its own wall clock.
  * - No right/wrong, no key, no weight shown — before or after answering. TKP is never worded as a verdict.
  * - The flag is tab-only and the screen says so (GAP-F4).
  * - Every selection is autosaved; submit is refused while the last save failed.
@@ -48,6 +49,41 @@ export default function Runner({ mode }: { mode: 'tryout' | 'practice' }) {
       }
     </OutcomeView>
   )
+}
+
+/**
+ * The clock, rendered from the server's state only (FRONTEND_EXAM_FLOW §6). Between polls the display advances
+ * locally by the time elapsed since the payload arrived, so a minute does not freeze; the server stays the owner
+ * of `activeMs` and of expiry, and any reload corrects the display.
+ * @param {{detail: SessionDetail}} props
+ */
+function SessionClock({ detail }: { detail: SessionDetail }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const running = detail.runningSince !== null
+  const sincePayload = running ? Math.max(0, now - Date.parse(detail.runningSince as string)) : 0
+  const activeMs = detail.activeMs + sincePayload
+  const pausedNote = running ? '' : ' · dijeda'
+
+  if (detail.durationMs === null) {
+    return <>Waktu aktif {clockText(activeMs)} · tanpa batas waktu{pausedNote}</>
+  }
+  const remaining = Math.max(0, detail.durationMs - activeMs)
+  return <>Sisa waktu {clockText(remaining)}{pausedNote}</>
+}
+
+/** `mm:ss` for a duration under an hour, `h:mm:ss` otherwise. */
+function clockText(ms: number): string {
+  const total = Math.floor(ms / 1000)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
 }
 
 export const resultPath = (mode: 'tryout' | 'practice', sessionId: string) =>
@@ -308,8 +344,10 @@ function RunnerBody({ detail, mode }: { detail: SessionDetail; mode: 'tryout' | 
             >
               {current.stem}
             </h1>
-            <div className="mt-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <ProvenanceBadge provenance={{ kind: current.provenanceKind, sourceYear: current.sourceYear }} />
+              {/* The author-assigned difficulty frozen with the session (QUESTION_SPECIFICATION §1.1). */}
+              <Badge tone="neutral">{difficultyLabel(current.difficulty)}</Badge>
             </div>
 
             <p className="mt-4 text-base leading-relaxed text-muted">
@@ -416,7 +454,7 @@ function RunnerBody({ detail, mode }: { detail: SessionDetail; mode: 'tryout' | 
             </ul>
 
             <p className="mt-4 text-sm leading-relaxed text-muted">
-              Tidak ada hitung mundur untuk sesi ini.
+              <SessionClock detail={detail} />
             </p>
           </Panel>
         </aside>

@@ -30,6 +30,11 @@ export function testName(t: 'TWK' | 'TIU' | 'TKP'): string {
   return { TWK: 'Wawasan Kebangsaan', TIU: 'Kemampuan Berpikir', TKP: 'Situasi dan Perilaku Kerja' }[t]
 }
 
+/** The author-assigned difficulty as the learner reads it (QUESTION_SPECIFICATION §1.1 `aiInitial`). */
+export function difficultyLabel(d: 'easy' | 'medium' | 'hard'): string {
+  return { easy: 'Mudah', medium: 'Sedang', hard: 'Sulit' }[d]
+}
+
 /* ── Last-result pointer (FRONTEND_STATE_MANAGEMENT §5) ───────────────────────────────────
  * A pointer only: id + mode + when. Never answers, never scores. Reads/writes are guarded because
  * private modes and cleared storage throw. */
