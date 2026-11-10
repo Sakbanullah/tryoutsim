@@ -73,8 +73,15 @@ async function database() {
  * @param {string} tag
  * @returns {number}
  */
+/**
+ * A `configVersion` that outranks every row already in the database, so `resolveConfig` (order 2: newest usable
+ * config) picks this fixture's. The test database accumulates rows from earlier runs and seeds, and a fixed value
+ * would silently lose to them. Stay inside PostgreSQL `integer`.
+ * @param {string} tag
+ * @returns {number}
+ */
 function configVersionFor(tag) {
-  return 1_000_000 + Number(String(tag).replace(/\D/g, '').slice(-9));
+  return 1_500_000_000 + Number(String(tag).replace(/\D/g, '').slice(-6));
 }
 
 /**
@@ -110,10 +117,14 @@ async function fixture(prisma, { tag, state = 'provisional' }) {
     data: { examConfigId: configId, mode: 'total_only', total: 10, sourceJson: JSON.stringify({ tier: 'HISTORICAL', pathway: 'CPNS' }) },
   });
   await prisma.package.create({ data: { id: `pkg-${tag}`, mode: 'tryout', source: 'custom', retiredAt: null } });
+  const cv = configVersionFor(tag);
   const version = await prisma.packageVersion.create({
     data: {
       packageId: `pkg-${tag}`, version: 1, titleId: `paket ${tag}`, createdAt: new Date().toISOString(),
       definitionJson: JSON.stringify({ kind: 'subtest', test: 'TWK', itemCount: 3 }),
+      // Pin the fixture's own config (CPNS_2026_REGULATIONS §4.2.1 order 1). Order 2 is a global "newest usable
+      // config" and would let tests running in parallel, or rows left by earlier runs, win the binding.
+      examConfigId: configId, examConfigVersion: cv,
     },
   });
   return {
@@ -142,7 +153,7 @@ test('session: snapshot, tryout duration, autosave clock, submit verdict follows
   const now = Date.parse('2026-11-10T08:00:00.000Z');
   const { session, snapshotVersion, configResolution } = await createSession(prisma, created, 'tryout', new Date(now).toISOString());
   assert.match(snapshotVersion, /^s1-/);
-  assert.equal(configResolution, 'resolved', 'no pin: order 2');
+  assert.equal(configResolution, 'pinned', 'the fixture pins its own config (order 1)');
   sessionIds.push(session.id);
   assert.equal(session.durationMs, 60_000, 'tryout duration is the config duration');
 
@@ -270,8 +281,11 @@ test('AUD-87: createSession resolves the version pin first, else the latest usab
   const fallbackRun = await createSession(prisma, stale, 'tryout', at);
   sessions.push(fallbackRun.session.id);
   assert.equal(fallbackRun.configResolution, 'fallback', 'the pin no longer matches a usable config');
-  // Order 2 is the newest usable CPNS config, which is the pinned one (it is a valid config in its own right).
-  assert.equal(fallbackRun.session.examConfigId, pinnedId);
+  // Order 2 is "the newest usable CPNS config" across the whole database, so which row wins is not this test's
+  // business; what matters is that the unusable pin did not bind and that a real config did.
+  assert.notEqual(fallbackRun.session.examConfigId, pinnedId, 'an unusable pin is never bound');
+  const bound = await prisma.examConfig.findUnique({ where: { id: fallbackRun.session.examConfigId } });
+  assert.equal(bound?.dataProvenance, 'seed', 'the fallback binds a usable seed config');
 
   const unpinned = await createSession(prisma, await pin(null, null), 'tryout', at);
   sessions.push(unpinned.session.id);
@@ -304,4 +318,30 @@ test('runner payload carries the frozen question content the screen renders (B2)
   assert.deepEqual(first.options.map((o) => o.key), ['A', 'B', 'C', 'D', 'E']);
   assert.equal(first.selected, null);
   assert.equal(typeof runner.durationMs, 'number', 'the clock is part of the payload');
+});
+
+test('submit with a partial answer body scores the blanks instead of failing PF-01', { skip: SKIP }, async (t) => {
+  const { db, reason } = await database();
+  if (db === null) return t.skip(reason);
+  const prisma = /** @type {any} */ (db.prisma);
+  const tag = `d2b${Date.now()}`;
+  const migrator = await migratorConnection();
+  /** @type {string[]} */
+  const sessions = [];
+  t.after(async () => {
+    await cleanupFixture(migrator, prisma, tag, { sessionIds: sessions, configIds: [`cfg-${tag}`] });
+    await migrator.end();
+    await db.close();
+  });
+  const created = await fixture(prisma, { tag });
+  const { session } = await createSession(prisma, created, 'tryout', new Date().toISOString());
+  sessions.push(session.id);
+  await saveAnswer(prisma, session.id, { questionId: `q-${tag}-0`, selected: 'B', flagged: false, elapsedActiveMs: 100 }, Date.now(), new Date().toISOString());
+
+  // The screen sends the answers it holds (one here); the other two produce no answer row at all.
+  const result = await submitSession(prisma, session.id, [{ questionId: `q-${tag}-0`, selected: 'B' }], Date.now() + 500, new Date(Date.now() + 500).toISOString());
+  assert.equal(result.total.earned, 5, 'the answered question scores');
+  assert.equal(result.byQuestion.length, 3, 'every roster question has a result row');
+  assert.equal(result.byQuestion.filter((row) => row.selected === null).length, 2, 'blanks stay blank and never earn credit');
+  assert.equal(result.total.answeredCount, 1);
 });

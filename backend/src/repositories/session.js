@@ -608,7 +608,16 @@ export async function submitSession(prisma, sessionId, overrideSheets, nowMs, no
   const session = await requireSession(prisma, sessionId);
   assertSubmittable(session);
 
-  const sheets = overrideSheets ?? completeSheets(await requireSnapshot(prisma, sessionId), await storedSheets(prisma, sessionId));
+  // A body carries the answers the client last saw, not necessarily every question (§7.3 "a blank never earns
+  // credit"). Merge it over the stored sheet and complete the set: PF-01 needs one row per roster question (SOME blank).
+  const snapshot = await requireSnapshot(prisma, sessionId);
+  const persisted = await storedSheets(prisma, sessionId);
+  const override = overrideSheets ?? [];
+  const merged = [
+    ...persisted.filter((row) => !override.some((sent) => sent.questionId === row.questionId)),
+    ...override,
+  ];
+  const sheets = completeSheets(snapshot, merged);
   const stored = await scoreAndStore(prisma, session, sheets, nowMs, nowIso);
 
   try {
