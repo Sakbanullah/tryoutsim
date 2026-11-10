@@ -172,7 +172,9 @@ export function registerSessionRoutes(router, { prisma, now, nowIso }) {
 
   /** Frozen content + matched explanation for up to 20 roster ids (200, 400, 404, 409). */
   router.add('GET', '/sessions/:id/questions', async ({ params, query }) => ({
-    data: await loadReview(prisma, params.id, query.getAll('ids')),
+    // `ids` is a comma-separated list (§7.7). Repeated `?ids=a&ids=b` is joined the same way so one reader
+    // (`parseReviewIds`) validates both spellings.
+    data: await loadReview(prisma, params.id, query.getAll('ids').join(',')),
   }));
 
   /** What deleting this entry changes (200, 404). */
