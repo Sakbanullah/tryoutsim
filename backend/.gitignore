@@ -1,0 +1,7 @@
+node_modules/
+# Prisma Client is generated from schema.prisma, not committed.
+src/generated/
+# Connection strings carry the role password; they live outside the repository.
+db.env
+.env
+.env.*

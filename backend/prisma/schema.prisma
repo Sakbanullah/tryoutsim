@@ -1,0 +1,458 @@
+// TryoutSim data model over PostgreSQL 18 (ADR-002, ADR-011).
+//
+// Column names and semantics are the contract of docs/backend/DATABASE_SCHEMA.md;
+// this file only expresses what the Prisma DSL can express. Everything the DSL
+// cannot — CHECK constraints, append-only triggers, the DB-4 cascade trigger, the
+// SECURITY DEFINER delete function, partial indexes, grants and `COLLATE "C"` on
+// opaque ids — is hand-written SQL in the same migration (DATABASE_SCHEMA §3,
+// SCHEMA_CONTRACT_REVIEW §1). Prisma does not see those objects, so a generated
+// migration that rebuilds a table would drop them: never accept one unreviewed.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model ExamConfig {
+  id                  String    @id
+  pathway             String
+  examYear            Int
+  state               String
+  dataProvenance      String
+  durationMinutes     Int?
+  itemCount           Int
+  twkCount            Int
+  tiuCount            Int
+  tkpCount            Int
+  twkWeight           Int
+  tiuWeight           Int
+  tkpWeightMin        Int
+  tkpWeightMax        Int
+  maxScore            Int
+  notice              String
+  scoringVersion      Int
+  configVersion       Int
+  regulatoryBasisHash String
+
+  basisRefs BasisRef[]
+  thresholds Thresholds?
+  approvals ProvisionalApproval[]
+  sessions  Session[]
+
+  @@map("exam_config")
+}
+
+model BasisRef {
+  id           String @id
+  examConfigId String
+  tier         String
+  pathway      String
+  title        String
+  source       String
+  url          String
+  accessedAt   String
+
+  examConfig ExamConfig @relation(fields: [examConfigId], references: [id], onDelete: Cascade)
+
+  @@map("basis_ref")
+}
+
+model Thresholds {
+  examConfigId String @id
+  mode         String
+  twk          Int?
+  tiu          Int?
+  tkp          Int?
+  total        Int?
+  sourceJson   String
+
+  examConfig ExamConfig @relation(fields: [examConfigId], references: [id], onDelete: Cascade)
+
+  @@map("thresholds")
+}
+
+model ProvisionalApproval {
+  id                        String @id
+  configId                  String
+  configVersion             Int
+  scoringVersion            Int
+  regulatoryBasisHash       String
+  approvedByUserAt          String
+  approvedBy                String
+  acknowledgedWarningsJson  String
+
+  examConfig ExamConfig @relation(fields: [configId], references: [id], onDelete: Restrict)
+
+  @@index([configId, configVersion])
+  @@map("provisional_approval")
+}
+
+model Question {
+  id                    String @id
+  test                  String
+  competencyId          String
+  stimulus              String
+  stem                  String
+  optionsJson           String
+  answerKeyJson         String
+  explanation           String
+  difficultyAiInitial   String
+  empiricalDifficultyJson String?
+  lifecycle             String
+  dynamicEligible       Int
+  answerKeyValidatedAt  String?
+  quarantinedReason     String?
+  provenanceJson        String
+  contentHash           String
+  taxonomyVersion       String
+  contentVersion        Int
+
+  competency Competency @relation(fields: [competencyId], references: [id], onDelete: Restrict)
+  versions   QuestionVersion[]
+  reports    QuestionReport[]
+  validations ValidationRecord[]
+  reviews    QuestionReview[]
+  answers    AnswerSheet[]
+
+  @@map("question")
+}
+
+model QuestionVersion {
+  questionId    String
+  contentVersion Int
+  contentHash   String
+  stem          String
+  optionsJson   String
+  answerKeyJson String
+  explanation   String
+  createdAt     String
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@id([questionId, contentVersion])
+  @@map("question_version")
+}
+
+model QuestionReport {
+  id             String @id
+  questionId     String
+  contentVersion Int
+  reportedAt     String
+  severity       String
+  category       String
+  note           String?
+  resolution     String?
+  resolvedAt     String?
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@map("question_report")
+}
+
+model ValidationRecord {
+  id               String @id
+  questionId       String
+  contentVersion   Int
+  contentHash      String
+  result           String
+  layersJson       String
+  validatorVersion String
+  validatedAt      String
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@map("validation_record")
+}
+
+model QuestionReview {
+  id                  String @id
+  questionId          String
+  reviewer            String
+  reviewedAt          String
+  decision            String
+  activity            String
+  editsJson           String?
+  answerKeyValidatedBy String?
+  answerKeyValidatedAt String?
+  notes               String?
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@map("question_review")
+}
+
+model Competency {
+  id       String @id
+  parentId String?
+  test     String
+  label    String
+  goal     String
+  tier     String
+
+  parent   Competency?  @relation("CompetencyHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children Competency[] @relation("CompetencyHierarchy")
+  questions Question[]
+
+  @@map("competency")
+}
+
+model Session {
+  id             String @id
+  examConfigId   String
+  configVersion  Int
+  scoringVersion Int
+  mode           String
+  packageId      String
+  packageVersion Int
+  rosterJson     String
+  status         String
+  activeMs       Int
+  runningSince   String?
+  durationMs     Int?
+  startedAt      String
+  submittedAt    String?
+
+  examConfig ExamConfig @relation(fields: [examConfigId], references: [id], onDelete: Restrict)
+  package    Package    @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  snapshot   SessionSnapshot?
+  answers    AnswerSheet[]
+  result     ScoreResult?
+
+  @@map("session")
+}
+
+model SessionSnapshot {
+  sessionId          String @id
+  snapshotVersion    String
+  questionsJson      String
+  answerKeysJson     String
+  configJson         String
+  thresholdsJson     String
+  approvalJson       String?
+  packageBindingJson String
+  timingJson         String
+  rosterJson         String
+  taxonomyVersion    String
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@map("session_snapshot")
+}
+
+model SessionDeletion {
+  id            String @id
+  sessionId     String
+  mode          String
+  configId      String
+  configVersion Int
+  startedAt     String
+  finishedAt    String
+  questionCount Int
+  deletedAt     String
+  deletionKind  String
+
+  @@map("session_deletion")
+}
+
+model AnswerSheet {
+  sessionId        String
+  questionId       String
+  selectedOption   String?
+  answerTimestampMs Int
+  elapsedActiveMs  Int
+  flagged          Int
+
+  session  Session  @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@id([sessionId, questionId])
+  @@map("answer_sheet")
+}
+
+model ScoreResult {
+  sessionId         String @id
+  snapshotVersion   String
+  totalJson         String
+  byTestJson        String
+  byCompetencyJson  String
+  byQuestionJson    String
+  thresholdsJson    String
+  verdictJson       String?
+  approvalJson      String?
+  blockedErrorCode  String?
+  verdictWithheldJson String?
+  timingJson        String?
+  scoredAt          String
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@map("score_result")
+}
+
+model Provider {
+  id                 String  @id
+  providerId         String
+  defaultModel       String
+  headersJson        String
+  extraParamsJson    String
+  baseUrl            String
+  preset             String
+  timeoutMs          Int
+  capabilityFlagsJson String
+  testedAt           String?
+  modelCacheJson     String?
+
+  secretRef SecretRef?
+  jobs      GenerationJob[]
+
+  @@map("provider")
+}
+
+model SecretRef {
+  providerId     String @id
+  keyLast4       String
+  hasKey         Int
+  storeEntryName String
+  storeKind      String
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@map("secret_ref")
+}
+
+model AiRouting {
+  id                String @id
+  defaultProviderId String?
+  defaultModel      String?
+  perTaskJson       String
+
+  @@map("ai_routing")
+}
+
+model GenerationJob {
+  id                  String @id
+  competencyIdsJson   String
+  count               Int
+  status              String
+  providerId          String
+  taskModel           String
+  promptVersion       String
+  producedCount       Int
+  quarantinedCount    Int
+  partial             Int
+
+  provider Provider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  batches  GenerationBatch[]
+
+  @@map("generation_job")
+}
+
+model GenerationBatch {
+  id                String @id
+  jobId             String
+  status            String
+  failureCategory   String?
+  rawResponseRef    String?
+  draftQuestionIds  String
+
+  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("generation_batch")
+}
+
+model Notification {
+  id           String @id
+  type         String
+  severity     String
+  titleKey     String
+  paramsJson   String
+  linkJson     String?
+  entityId     String
+  createdAt    String
+  readAt       String?
+  dismissedAt  String?
+
+  @@unique([type, entityId])
+  @@map("notification")
+}
+
+model BackupRecord {
+  id             String @id
+  mode           String
+  startedAt      String
+  finishedAt     String
+  status         String
+  filePath       String?
+  fileSizeBytes  Int?
+  failureReason  String?
+  schemaVersion  Int
+
+  @@map("backup_record")
+}
+
+model Package {
+  id        String @id
+  mode      String
+  source    String
+  retiredAt String?
+
+  versions PackageVersion[]
+  sessions Session[]
+
+  @@map("package")
+}
+
+model PackageVersion {
+  packageId      String
+  version        Int
+  definitionJson String
+  titleId        String
+  createdAt      String
+  examConfigId      String?
+  examConfigVersion Int?
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@id([packageId, version])
+  @@map("package_version")
+}
+
+model ObservedQuestionHistory {
+  questionId     String @id
+  lastAnsweredAt String?
+  answerCount    Int
+
+  @@map("observed_question_history")
+}
+
+model Material {
+  id              String @id
+  title           String
+  contentType     String
+  scopeJson       String
+  status          String
+  provenanceJson  String
+  version         Int
+  sourcesJson     String
+  approvalVersion Int?
+  approvedAt      String?
+
+  versions MaterialVersion[]
+
+  @@map("material")
+}
+
+model MaterialVersion {
+  materialId String
+  version    Int
+  bodyJson   String
+
+  material Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+
+  @@id([materialId, version])
+  @@map("material_version")
+}
