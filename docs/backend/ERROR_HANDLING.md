@@ -40,14 +40,30 @@ Provider transport layers mask the `Authorization` header **before** error propa
 | state | `error.code` | after-effect |
 |---|---|---|
 | preflight/SC rejection | `PREFLIGHT_FAILED` (422) | nothing scored; answer sheet intact |
-| approval no longer valid | `APPROVAL_INVALID` (409) | session stored unscored |
-| bound-version mismatch | `APPROVAL_VERSION_MISMATCH` (409) | session stored unscored |
-| threshold block broken | `THRESHOLD_CONFIG_INVALID` (409) | config rejected until corrected |
+| never approved | `APPROVAL_MISSING` | **not an error**: score written, `verdict: null`, `changed[]` present on the result |
+| approval no longer valid | `APPROVAL_INVALID` | **not an error**: score written, `verdict: null`, `changed[]` names the drifted value |
+| bound-version mismatch | `APPROVAL_VERSION_MISMATCH` | **not an error**: score written, `verdict: null` |
+| threshold block broken | `THRESHOLD_CONFIG_INVALID` (409); the PF-09 refusals `THRESHOLD_NOT_INTEGER`, `THRESHOLD_EXCEEDS_MAX`, `THRESHOLDS_REQUIRE_APPROVAL` share this class | config rejected until corrected |
+| regulatory scope wrong | `REGULATORY_PATHWAY_MISMATCH` / `REGULATORY_YEAR_MISMATCH` / `REGULATORY_SCOPE_UNVERIFIED` (409) | config rebuilt; nothing scored |
+| already submitted (re-submit) | `CONFLICT` `reason:"already_submitted"` (409) | answers stay frozen; use `/score` |
+| already scored (re-score) | `CONFLICT` `reason:"not_resubmittable"` (409) | existing `ScoreResult` stands |
 
-All three 409 states leave **no committed score**; a later retry re-preflights against the same
-snapshot ([SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §11). This is idempotent:
-resubmitting the same unchanged input after re-approval either scores or re-rejects with the same
-code.
+The three approval states are **verdict-only** conditions: the submit returns `200` with a stored
+`ScoreResult` whose `verdict` is `null` ([SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §5.6).
+A retry after approval uses `POST /sessions/:id/score`, which recomputes against the same frozen snapshot
+and may only add the verdict while every score field stays identical
+([API_SPECIFICATION](./API_SPECIFICATION.md) §7.3).
+
+`POST /questions/:id/answer-feedback` on a tryout returns `CONFLICT` `reason:"tryout_no_feedback"` (409);
+it is never answered with content ([API_SPECIFICATION](./API_SPECIFICATION.md) §7.6).
+
+A `THRESHOLD_CONFIG_INVALID` state leaves **no committed score**; the retry is
+`POST /sessions/:id/score`, which re-preflights against the same frozen snapshot
+([SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §11,
+[API_SPECIFICATION](./API_SPECIFICATION.md) §7.3). This is idempotent: the first success writes the
+result and every later call is `not_resubmittable`; a failure writes nothing, so the same unchanged
+input after correction either scores or re-rejects with the same code. Which code wins when several
+apply is [SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §11.1.
 
 ## 5. Generation failure taxonomy
 
@@ -61,7 +77,9 @@ Each lands on the batch with a `failureCategory`; the generation endpoint surfac
 ## 6. Retry / idempotency
 
 - `submit` is idempotent per snapshot: same input → same `ScoreResult` or same `PREFLIGHT_FAILED`
-  set (deterministic, [SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §8).
+  set (deterministic, [SCORING_METHODOLOGY](../examination/SCORING_METHODOLOGY.md) §8). After the
+  first submit the session is frozen — `submit` returns `already_submitted` and scoring continues
+  only through `/score`.
 - Provider retries are bounded and backoff-capped; a retry that changes the answer is never done
   silently (generation §5).
 

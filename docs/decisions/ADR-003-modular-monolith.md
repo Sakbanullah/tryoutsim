@@ -9,7 +9,7 @@ The app has distinct domains (scoring, questions, analytics, AI, recommendations
 
 ## Decision
 
-One backend process, **modular monolith**: modules separated by folder and interface, not by network. One process, one SQLite file. See [SYSTEM_ARCHITECTURE.md](../architecture/SYSTEM_ARCHITECTURE.md) §2–3.
+One backend process, **modular monolith**: modules separated by folder and interface, not by network. One process, one local PostgreSQL 18 database ([ADR-002](ADR-002-sqlite.md)). See [SYSTEM_ARCHITECTURE.md](../architecture/SYSTEM_ARCHITECTURE.md) §2–3.
 
 ## Consequences
 

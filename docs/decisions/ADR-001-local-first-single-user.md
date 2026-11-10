@@ -9,7 +9,7 @@ CPNS prep is personal. No sharing, leaderboard, or team features are needed for 
 
 ## Decision
 
-Single-user, local-first. One process, one SQLite file, loopback-bound. No cloud account, no remote data.
+Single-user, local-first. One process, one local PostgreSQL 18 database ([ADR-002](ADR-002-sqlite.md)), loopback-bound. No cloud account, no remote data.
 
 ## Consequences
 

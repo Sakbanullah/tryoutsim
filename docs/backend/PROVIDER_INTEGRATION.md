@@ -26,8 +26,18 @@ integration behaviour (transport, errors, secrets).
 | `responseFormat` | `json_object` when `jsonMode` capability is on |
 | `maxContext` / `timeoutMs` | capability flag + provider setting |
 
-Capability flags are user-set and never auto-derived from a model-name guess
-([AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §5).
+Capability flags are **auto-detected on the connection test and manually correctable**; a model with
+neither is treated conservatively (no JSON mode, no streaming, unknown context)
+([AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §6).
+
+## 2.1 Routing and the tested-pair rule
+
+- The pair used by a request is `perTask[task]` if set, else the single global default
+  ([AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §4).
+- A job is refused with `409 CONFLICT reason:"provider_untested"` unless a successful test for that
+  provider+model pair is recorded after the last edit to `baseUrl`, key or model.
+- **No cross-provider fallback.** A failure is returned; the retry goes to the same pair unless the user
+  changes the routing ([AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §7).
 
 ## 3. Secrets on the wire
 
@@ -43,9 +53,18 @@ transport error ([QUESTION_GENERATION](../ai/QUESTION_GENERATION.md) §5).
 
 ## 5. Connection test
 
-`POST /providers/:id/test` runs a minimal smoke (listModels or a 1-token chat) and returns an
-envelope `{ ok, latencyMs, reason }` — `reason` never includes the key
-([AUTHENTICATION](./AUTHENTICATION.md), [API_ENDPOINTS](./API_ENDPOINTS.md) §4).
+`POST /providers/:id/test` runs a minimal smoke (listModels or a 1-token chat) **and the capability
+probe**, and returns the `ProviderTransport.test()` result of
+[AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §2 —
+`{ ok: true, latencyMs }` or `{ ok: false, latencyMs, reason }` — inside the success envelope, since a
+failed test is a *result*, not an API error. `reason` is scrubbed by the SEC-2 scrubber before it is
+returned ([AUTHENTICATION](./AUTHENTICATION.md), [API_ENDPOINTS](./API_ENDPOINTS.md) §8). A successful
+test records `testedAt` and stores the detected capabilities with `source: 'auto'`.
+
+## 5.1 Usage is read and discarded
+
+A response's `usage` object is never persisted and never rendered, for any feature or job
+([AI_PROVIDER_ARCHITECTURE](../ai/AI_PROVIDER_ARCHITECTURE.md) §9).
 
 ## 6. Boundary
 

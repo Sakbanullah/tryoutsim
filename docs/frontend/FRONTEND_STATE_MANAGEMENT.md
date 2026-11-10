@@ -1,51 +1,85 @@
 # Frontend State Management
 
-State strategy. Constraint: **no premature Zustand/Redux/TanStack Query**
-([plan](../architecture/ARCHITECTURE_DECISIONS.md), ADR-010 Proposed). This file fixes the *approach*
-and the *upgrade triggers*, not a library choice.
+How the UI holds data, what it may persist, and where each kind of state lives.
 
 ---
 
 ## 1. Default: nothing special
 
-- Screen-local UI state lives in the component.
-- Server data is fetched through the Data-layer client and held where it is read
-  ([FRONTEND_COMPONENT_ARCHITECTURE.md](./FRONTEND_COMPONENT_ARCHITECTURE.md) §5).
-- The rule: **state closest to where it is used; promote only when it must be shared.**
+- Screen-local UI state (dialog open, selected tab) lives in the component.
+- Server data is fetched through the Data client and held where it is read.
+- **State closest to where it is used; promote only when it must be shared.**
 
 ## 2. Shared client state (the only global)
 
-A single small module store holds the few things genuinely shared across screens:
-
 | State | Shape | Shared because |
 |---|---|---|
-| `contractVersion` | string | matched against `meta.version` once per boot |
-| `activeRunner` | `{ sessionId, mode } | null` | runner is modal over the shell, survives child remount |
-| `currentConfigId` | string \| null | dashboard + tryout + result share it |
+| `contractVersion` | `string` | matched against `meta.version`; drives the one full-screen 426 notice |
+| `activeSession` | `{ sessionId, mode: 'tryout' \| 'latihan' } \| null` | the runner survives child remounts |
+| `pendingAutosave` | `{ sessionId, dirty: boolean } \| null` | a failing autosave must be visible from the shell |
+| `unreadNotifications` | `number` | shell bell without a second poll from every screen |
+| `flash` | `{ kind: 'error' \| 'info'; text: string } \| null` | one-shot message after navigation |
 
-That is the whole global surface for MVP. Everything else is local or fetched-read-local.
+That is the whole global surface. Everything else is local or fetched-read-local.
 
-## 3. Server cache policy (no query library yet)
+## 3. Three kinds of state, kept apart
 
-- Every read is a plain `fetch` via the Data client, returning typed contracts.
-- **Stale-while-revalidate by convention**: re-fetch on route enter for read endpoints; the runner's
-  in-progress sheet uses `PATCH` autosave and does **not** keep a second cached copy.
-- No client-side recomputation of scores/metrics (BR-X2): the client stores what the server returned,
-  never a derived score.
+| Kind | Lives | Examples |
+|---|---|---|
+| **Backend data** | backend, over HTTP | scores, questions, configs, analytics, approvals |
+| **Tab-only state** | component / module store, lost on reload | selected answer not yet saved, flag, open dialog, filter choices |
+| **Mock data** | the mock layer, clearly labelled | every fixture before the backend exists |
 
-## 4. Upgrade triggers (add a library only when a real need appears)
+The UI never stores a *derived* score, percentage or rank. It stores what the server returned.
 
-| symptom observed | then |
+## 4. Active exam state
+
+- **Answers** are sent to the backend on every change through the documented autosave route
+  (`PATCH /sessions/:id/answers`: `{ questionId, selected, flagged?, elapsedActiveMs }`), one answer
+  plus its clock in one call. The mock layer holds them before the backend exists; the UI still
+  behaves as if a save can fail.
+- **Autosave feedback** is **three states, always visible**: *tersimpan* · *menyimpan…* ·
+  *belum tersimpan — coba lagi*. The third is a persistent bar with a retry button; it never times out
+  silently.
+- **Navigation between questions is never blocked** by a failing save; the user can attempt answers to
+  the last item even if an earlier save failed, and the confirm screen refuses to submit while the
+  bar reads *belum tersimpan*.
+- **Flags** are saved with the answer and survive reload.
+- **The clock is server state.** The runner renders the returned `activeMs`/`runningSince`; leaving
+  pauses it (`POST /sessions/:id/pause`), returning resumes it (`POST /sessions/:id/resume`). The UI
+  never advances the timer past a confirmed value.
+- **No optimistic score.** The result screen only renders a `ScoreResult` the server returned.
+
+## 5. Browser storage
+
+| Value | Allowed? | Why |
+|---|---|---|
+| Last `sessionId` (pointer only) | yes | reopens the last result after reload |
+| Open-session pointer | yes | "Lanjutkan sesi" without a fresh history call; the id is not a secret |
+| Answer letter, dragged items, draft text | **no** | exam answers belong to the backend contract; storing them locally would create a second, unsynchronised truth |
+| Provider keys | **never** | NFR-7; keys are write-only and never reach the browser ([SECURITY](../architecture/SECURITY.md) §3) |
+| Scores / results | no | re-fetch; never cache a score the user cannot refresh |
+
+## 6. Loading, empty and error states
+
+Every screen implements all four, and none is a blank page:
+
+| State | Rule |
 |---|---|
-| Several screens need manual cache invalidation and it becomes bug-prone | introduce a minimal query cache |
-| Global state grows beyond the three slots and mutations cross many features | introduce a small store library |
-| The Data client can no longer keep fetch/parse logic DRY | refactor the client, not add a framework |
+| Loading | skeleton of the final layout, "Sedang memuat…"; no spinner-only screens |
+| Empty | what is missing + one action that fixes it (start a tryout, add a provider) |
+| Error | plain Indonesian sentence + "Coba lagi"; technical codes never shown |
+| Success | the data, with counts |
 
-Until one of these is actually observed, the baseline stays ([MVP_SCOPE](../product/MVP_SCOPE.md) §2).
+`insufficient_data` is **not** an error state: it is a normal reportable-with-caveat state
+([FRONTEND_RESULTS_ANALYTICS](./FRONTEND_RESULTS_ANALYTICS.md) §6).
 
-## 5. Error state
+## 7. Upgrade triggers
 
-`PREFLIGHT_FAILED` / `APPROVAL_INVALID` / `APPROVAL_VERSION_MISMATCH` /
-`THRESHOLD_CONFIG_INVALID` are handled **once** in the Data layer's error mapper and exposed to
-screens as typed results (e.g. `{ kind: 'blocked', changed: [...] }`), not as scattered `try/catch`
-([FRONTEND_DATA_CONTRACTS.md](./FRONTEND_DATA_CONTRACTS.md) §5).
+| Symptom | Then |
+|---|---|
+| Several screens hand-roll cache invalidation and it breaks | add one minimal query cache |
+| Global state grows past the table in §2 and mutations cross features | add a small store library |
+| The Data client can no longer keep fetch/parse DRY | refactor the client, not add a framework |
+
+Until one occurs, the baseline stands.

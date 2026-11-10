@@ -31,6 +31,11 @@ Metrics computed *from* scores: [ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGIN
    invariant 5 hold.
 9. **Scoring and analytics are separate.** Scoring produces points and counts. Metrics (§9) are
    computed from scores downstream and never feed back into them.
+10. **Score and verdict are separate outputs.** A session is always scored; a threshold verdict is
+    emitted only when the snapshot carries thresholds *and* a valid approval (§5.6, §11). No verdict
+    is ever fabricated as `false`.
+11. **A blank never earns credit.** `unansweredScore = 0` for every shipped config; a blank is not a
+    correct answer and is excluded from the accuracy denominator (§3.3).
 
 ---
 
@@ -82,10 +87,10 @@ type Bucket = {
 
 type ScoreResult = {
   sessionId: string;
-  configId: string;
-  configVersion: number;
-  scoringVersion: number;
-  snapshotVersion: string;                  // §7
+  configId: string;                         // = the session's config at snapshot time
+  configVersion: number;                    //                   "
+  scoringVersion: number;                   //                   "
+  snapshotVersion: string;                  // §7 — the only reference the session needs
   approval?: ScoreApprovalRef;              // §11 — present iff a provisional verdict was authorized
   total: Bucket;
   byTest: Record<'TWK' | 'TIU' | 'TKP', Bucket>;
@@ -102,13 +107,29 @@ type ScoreResult = {
   thresholds: ThresholdEvaluation;          // §5
 };
 
-type ScoreApprovalRef = {
-  approvedByUserAt: string;
-  approvedBy: string;
-  configVersion: number;                    // version this approval authorized
-  regulatoryBasisHash: string;
+// The approval record that authorized this result: identity + all four bound values, verbatim.
+// ScoreResult already carries configId/configVersion/scoringVersion from the same snapshot, so this
+// block is redundant by design — a result must be verifiable without re-reading anything else
+// (invariant 5). Longest-error evidence: APPROVAL_INVALID.changed[] names which bound value drifted.
+type ScoreApprovalRef = ProvisionalApproval;
+
+// Canonical identifier for the wire/storage representation. API_SPECIFICATION.md §5, the frontend
+// contracts and `score_result` all use exactly this shape; there is no second ScoreResult type.
+type SessionScoreResult = ScoreResult & {
+  bucketUnit: 'points';                     // every number in every Bucket is a raw point count
 };
 ```
+
+**One `ScoreResult`, three representations, one shape.** The pure function returns `ScoreResult`;
+the immutable stored row (`DATABASE_SCHEMA.md` §2) and the HTTP payload (`API_SPECIFICATION.md` §5)
+both round-trip exactly that object. There is no adapter boundary and no second field vocabulary:
+`byTest` (not `sections`), `byQuestion` (not `perQuestion`), `maxScore` and `selected` per question
+(not `possible`), `thresholds: ThresholdEvaluation` (§5.4, not `naik*`).
+
+**Identity and provenance are separate.** `configId`/`configVersion`/`scoringVersion` answer *which
+rule set produced this number*; `snapshotVersion` plus `approval` answer *which frozen inputs the
+user authorized*. A session is partitioned by the first and audited by the second — it never needs a
+value copied out of the config table to be understandable later.
 
 `possible` is the sum of each question's `maxScore`, accumulated in the same pass as `earned`.
 `answeredCount` and `correctCount` are accumulated in that same pass, so analytics never has to
@@ -152,6 +173,9 @@ Rules:
 - Weights need not be distinct; ties are allowed. There is **no** requirement that weights differ —
   an all-equal key is a defensible authoring decision, not a scoring error (see §6.1 note).
 - The range comes from the config (`rules.tkpWeightRange`), not from code.
+- The weights above are one valid key among many; §10.2 works a different valid key on the same
+  range. Neither example is a rule — SC-05 checks only that every weight is inside
+  `tkpWeightRange` and at least one equals `perQuestionMax.TKP`.
 
 **Evidence status of the range.** Two instruments have been read in full:
 
@@ -171,7 +195,13 @@ differs changes the config number; no code branch moves.
 
 - Flagging ("tandai") does not change the answer.
 - Unanswered → `selected: null` → `unansweredScore`.
-- Auto-submit at time-out scores every unanswered question identically — no penalty, no bonus, no
+- **A blank answer can never earn credit**: `unansweredScoreBounds.min ≥ 0` and `unansweredRule: 'zero'`
+  for every shipped config (SC-06, SC-07). A blank is never counted as correct and never enters the
+  accuracy denominator ([ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) §2.1).
+- Submitting with blanks is allowed. The confirmation screen states how many remain before the submit is
+  confirmed ([FRONTEND_EXAM_FLOW.md](../frontend/FRONTEND_EXAM_FLOW.md) §7); the blanks then score exactly
+  as blanks under `unansweredScore`.
+- Auto-submit at expiry scores every unanswered question identically — no penalty, no bonus, no
   partial credit.
 - `selected` is always one of the question's rendered option keys; PF-04 rejects anything else.
 
@@ -275,13 +305,27 @@ type ScoringRules = {
 
 type ThresholdSet = {
   mode: 'per_subtest_and_total' | 'per_subtest_only' | 'total_only' | 'none';
-  TWK?: number;
+  TWK?: number;          // = the NAB for that subtest, in points
   TIU?: number;
   TKP?: number;
-  total?: number;
+  total?: number;        // = the *cumulative* NAB, in points (see note)
   source: BasisRef;      // tier + pathway + year of the basis that produced these numbers
 };
 ```
+
+**`total` is the cumulative NAB — and nothing else.** The instruments express the special-track
+threshold as a *cumulative* minimum plus a TIU minimum (321/2024 KELIMA BELAS 311 + TIU 85;
+KEENAM BELAS 286 + TIU 60; 406/2026 KESEPULUH 281 + TIU 55). That cumulative minimum is exactly
+`total` under `mode: 'total_only'` or `'per_subtest_and_total'`, with `TIU` set to the TIU minimum. A
+threshold set therefore **never needs a `naikTotal`/`naikTiu` or `affirmation*` field**: those words
+describe *which instrument clause* a number came from, which is what `source` (a `BasisRef`) already
+records. `mode: 'none'` means what it says: the config states no threshold and no verdict is
+produced — including any config whose applicable clause cannot be established (see §5.5).
+
+Note that the instruments' cumulative minimum is **not** the arithmetic sum of their per-subtest
+figures: 321/2024 KEENAM BELAS is 286 while 65 + 80 + 166 = 311; 406/2026 KESEPULUH is 281 while
+65 + 80 + 156 = 301. The cumulative stop is taken independently of the sub-test stops and is
+slightly lenient, not contradictory. Never validate one against the other.
 
 ### 5.1 Required fields per mode — enforced, not implied
 
@@ -308,8 +352,8 @@ The comparison is **`>=`** (greater than or equal to), applied per field:
 | `none` | not evaluated |
 
 `>=` is chosen because the instruments define NAB as "nilai minimal yang harus dipenuhi"
-([CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3, Kepmen 321/2024 Diktum KESEMBILAN;
-406/2026 Diktum KETUJUH) — a minimum that *must be met*, i.e. meeting it qualifies. Exactly-on-threshold
+([CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3, Kepmen 321/2024 Diktum **KESEBELAS**;
+406/2026 Diktum **KETUJUH**) — a minimum that *must be met*, i.e. meeting it qualifies. Exactly-on-threshold
 passes. The real recruitment then ranks among qualifiers (Pasal 31(5)–(7) of Permen PANRB 6/2024);
 this app only reproduces qualification, never the ranking cut.
 
@@ -317,18 +361,26 @@ Integers only, so `>=` is unambiguous — no float tolerance needed or permitted
 
 ### 5.3 Value constraints — validated, not assumed (PF-09)
 
-Every present threshold field must be a **finite integer**, `0 ≤ value ≤ maxPossible[field]`, where
-`maxPossible[field]` is capped by the actual roster:
+Every present threshold field must be a **finite integer**, `0 ≤ value ≤ ceiling[field]`.
 
 ```ts
-maxPossible.TWK   = perQuestionMax.TWK * count(roster where test === 'TWK')
-maxPossible.TIU   = perQuestionMax.TIU * count(roster where test === 'TIU')
-maxPossible.TKP   = perQuestionMax.TKP * count(roster where test === 'TKP')
-maxPossible.total = maxPossible.TWK + maxPossible.TIU + maxPossible.TKP
+// The instrument's stated maximum for the subtest — NOT the roster. A tournament roster is
+// deliberately shorter than the real exam; capping at it would reject a real NAB as out of range.
+const CEILING_POINTS = { TWK: 150, TIU: 175, TKP: 225 };   // 321/2024 KEDELAPAN = 406/2026 KEENAM
+
+ceiling[field]     = CEILING_POINTS[field] * perQuestionMax[field] / 5
+ceiling.total      = ceiling.TWK + ceiling.TIU + ceiling.TKP
 ```
 
+`CEILING_POINTS` is a product constant whose values are canonical in
+[CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3; this file only names it. When a
+CPNS-2026 instrument states a different maximum, the constant changes with that config — no code
+branch moves, because every shipped max is expressed against `perQuestionMax = 5`.
+
 A non-integer (`NaN`, `Infinity`, fractional) is `THRESHOLD_NOT_INTEGER`; a value above the field's
-maximum is `THRESHOLD_EXCEEDS_MAX`. Both block scoring exactly like `THRESHOLD_CONFIG_INVALID`.
+ceiling is `THRESHOLD_EXCEEDS_MAX`. Both block scoring exactly like `THRESHOLD_CONFIG_INVALID`.
+Neither bound depends on how many questions a particular session happens to contain, so a practice
+drill carrying the full NAB is valid by construction.
 
 ### 5.4 Result of evaluation
 
@@ -349,8 +401,46 @@ verdict only under a **valid `provisional` approval** ([CPNS_2026_REGULATIONS.md
 `noticeRequired: true` even when its own-pathway tier is `VERIFIED-2026`. The result view renders the
 config `notice`. Values and provenance live there (§2.3) and are not restated here.
 
+### 5.6 A session is always scored; a verdict is conditional
+
+Two separate outputs, never merged:
+
+| Output | Requires | Absent when |
+|---|---|---|
+| **Score** — `total`, `byTest`, `byCompetency`, `byQuestion`, counts | the snapshot only | never — a started session always produces a score |
+| **Verdict** — `passed` against a `ThresholdSet` | `mode ≠ 'none'` **and** a valid approval (§11) | no thresholds carried, or the approval is invalid |
+
+Consequences, which every consumer must honour:
+
+1. A provisional config with `mode: 'none'` (the shipped default) is **startable and scorable**; its
+   result carries `thresholds: { mode: 'none' }` and the result screen says no passing threshold is
+   verified for CPNS 2026 ([CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §4.2).
+2. A `ThresholdSet` present but unapproved (or approved against other bound values) yields
+   **no `passed` field** — not `false`. Absence of a verdict is not a failure verdict.
+3. Analytics never depends on a verdict (§9); a config change can therefore never invalidate a
+   historical comparison of scores, only the meaning of a verdict.
+
 Tie-break order (TKP → TIU → TWK, Pasal 31(6)–(7)) is reproduced only as explanatory copy when the
 user compares two sessions against the same threshold. It never changes `passed`.
+
+### 5.5 Which NAB clause a session is scored against
+
+`ThresholdSet` holds **one** clause. The instruments do not publish a single NAB: 321/2024
+KEDUA BELAS applies to penetapan kebutuhan umum and kebutuhan khusus Kalimantan, while KEEMPAT BELAS
+excludes five categories (cumlaude, diaspora, disabilitas, Papua, Daerah Tertinggal) that KELIMA
+BELAS and KEENAM BELAS then re-threshold. `ThresholdSet` carries no `formasi`/exemption selector,
+and the app is not tied to a `formasi`, so:
+
+- **Which clause a CPNS 2026 drill should use is not established by this documentation.** It is
+  recorded as a product decision for the owner (see `docs/audit/AUDIT_FINDINGS_RESOLUTION.md`), not
+  silently chosen here.
+- Until the owner decides, a threshold set spanning clauses may not be shipped. The honest default
+  is `mode: 'none'` with `noticeRequired` copy — the app reports the user's earned points per
+  subtest, correctness counts, and attainment, and says explicitly it does not render a pass verdict
+  because the applicable NAB clause is uncertain. A verdict is still available to a user who
+  approves a provisional config that names the clause in `source.scope`.
+
+The value field never changes shape depending on the answer. Only `mode` does.
 
 ---
 
@@ -392,11 +482,11 @@ message the user sees is stable and complete rather than one-at-a-time.
 | PF-06 | Every key's `scoringVersion` equals `snapshot.scoringVersion`, all identical. | `SCORING_VERSION_MISMATCH` |
 | PF-07 | Every question's `test` is a valid literal; `competencyId` is a non-deprecated leaf in `snapshot.taxonomyVersion` whose `test` matches. | `INVALID_TEST` / `UNKNOWN_COMPETENCY` / `COMPETENCY_TEST_MISMATCH` / `DEPRECATED_COMPETENCY` |
 | PF-08 | Every key satisfies SC-01…SC-08 (§6.1). | the failing `SC-xx` code |
-| PF-09 | Threshold set satisfies §5.1 and §5.3; a non-`VERIFIED-2026`-for-pathway basis is permitted only when `snapshot.state` is `provisional` (§6.7). | `THRESHOLD_CONFIG_INVALID` / `THRESHOLD_NOT_INTEGER` / `THRESHOLD_EXCEEDS_MAX` / `THRESHOLDS_REQUIRE_APPROVAL` |
+| PF-09 | Threshold set satisfies §5.1 and §5.3; a non-`VERIFIED-2026`-for-pathway basis is permitted only when `snapshot.state` is `provisional` (§6.7). Carrying no thresholds (`mode: 'none'`) is always valid. | `THRESHOLD_CONFIG_INVALID` / `THRESHOLD_NOT_INTEGER` / `THRESHOLD_EXCEEDS_MAX` / `THRESHOLDS_REQUIRE_APPROVAL` |
 | PF-10 | Snapshot is internally complete and is the source of everything scored: sheets/keys/metadata resolve to it, and it binds config, rules, thresholds and approval (§6.5). | `SNAPSHOT_MISSING` / `SNAPSHOT_INCOMPLETE` / `SNAPSHOT_MISMATCH` |
 | PF-11 | Config rule fields are valid (§6.6): `scoringVersion`, `tkpWeightRange`, `unansweredScoreBounds`, `perQuestionMax`. | `CONFIG_SCORING_VERSION_INVALID` / `CONFIG_WEIGHT_RANGE_INVALID` / `CONFIG_UNANSWERED_BOUNDS_INVALID` / `CONFIG_PER_QUESTION_MAX_INVALID` |
 | PF-12 | Regulatory scope: every `BasisRef` matches the config's `pathway` and `examYear`, and no `Sekolah Kedinasan` instrument is treated as a `VERIFIED-2026` CPNS basis (§6.7). | `REGULATORY_PATHWAY_MISMATCH` / `REGULATORY_YEAR_MISMATCH` / `REGULATORY_SCOPE_UNVERIFIED` |
-| PF-13 | Approval integrity: when `snapshot.state === 'provisional'` (or the threshold basis is non-`VERIFIED-2026` for the pathway), the snapshot carries a valid `provisionalApproval` matching its bound `configVersion`/`scoringVersion`/`regulatoryBasisHash` (§11). | `APPROVAL_MISSING` / `APPROVAL_INVALID` / `APPROVAL_VERSION_MISMATCH` |
+| PF-13 | Approval integrity: when `thresholds.mode !== 'none'`, the snapshot carries a valid `provisionalApproval` matching its bound `configVersion`/`scoringVersion`/`regulatoryBasisHash` (§11). A failure withholds the **verdict**, not the score (§5.6). | `APPROVAL_MISSING` / `APPROVAL_INVALID` / `APPROVAL_VERSION_MISMATCH` |
 
 PF-00 and PF-01/PF-03/PF-05 together give "one question counted exactly once": the roster is unique
 (PF-00), sheet IDs match it bijectively (PF-01 + PF-02 + PF-03), and key IDs match it bijectively
@@ -483,10 +573,23 @@ PF-08 reports each failing SC rule; the same underlying defect (wrong `scoringVe
 by both PF-06 (cross-question) and SC-08 (per-key) because they test different scopes, and both are
 kept so a key that passes SC-08 but arrives under a divergent snapshot is still caught by PF-06.
 
-**Failing — thresholds.** `mode: 'per_subtest_and_total'` with `total` missing →
+**One origin per code, three checks.** `SCORING_VERSION_MISMATCH` has exactly one producer:
+`PF-06`/`SC-08` inside pre-flight, reported once per question. The `throw` in `scoreQuestion` (§4) is
+**not** a second origin — it is unreachable defence in depth, because scoring runs only after every
+pre-flight check passes (§6.3) and PF-06/SC-08 would already have produced the report. It cannot fire
+on a legitimately pre-flighted session, so there is no third code path a caller has to handle; the
+only surface that can ever carry this code is `PREFLIGHT_FAILED.errors[]`
+([API_SPECIFICATION](../backend/API_SPECIFICATION.md) §4.1).
+
+**Failing — thresholds.** Throughout these pre-flight examples `snapshot.state` is `'provisional'` (the
+only state in which a non-`VERIFIED-2026`-for-pathway basis can reach PF-09 at all), and `snapshot` is
+otherwise a well-formed session snapshot as in §7. `mode: 'per_subtest_and_total'` with `total` missing →
 `THRESHOLD_CONFIG_INVALID`. `TWK: 65.5` → `THRESHOLD_NOT_INTEGER`. `total: 999` on a 10-question
-roster (maxPossible.total = 50) → `THRESHOLD_EXCEEDS_MAX`. A non-`VERIFIED-2026`-for-pathway threshold
-basis with `snapshot.state !== 'provisional'` → `THRESHOLDS_REQUIRE_APPROVAL`.
+roster → `THRESHOLD_EXCEEDS_MAX` (999 > 550 ceiling; the roster size is irrelevant, §5.3). A
+non-`VERIFIED-2026`-for-pathway threshold basis with `snapshot.state !== 'provisional'` →
+`THRESHOLDS_REQUIRE_APPROVAL`. PF-09 runs before PF-13, so this is a **block**: the session is not scored,
+not a withheld verdict. The registry classifies it with `THRESHOLD_CONFIG_INVALID`
+([API_SPECIFICATION](../backend/API_SPECIFICATION.md) §4).
 
 **Failing — config rule fields.** `tkpWeightRange = [5, 1]` → `CONFIG_WEIGHT_RANGE_INVALID`;
 `unansweredScoreBounds = {min: 3, max: 1}` → `CONFIG_UNANSWERED_BOUNDS_INVALID`;
@@ -564,11 +667,12 @@ A `VERIFIED-2026` tier is **not sufficient** on its own. Every `BasisRef` (the c
   `examYear === snapshot.examYear` — otherwise `REGULATORY_PATHWAY_MISMATCH` /
   `REGULATORY_YEAR_MISMATCH`.
 - Kepmen PANRB 406/2026 has `pathway: 'SEKOLAH_KEDINASAN'`. In a `CPNS` config it may appear **only** as
-  `VERIFIED-2026-SEKOLAH_KEDINASAN` (corroboration), never as `VERIFIED-2026` authority for a CPNS
+  `EVIDENCE-BACKED-NOT-CPNS-2026` (corroboration), never as `VERIFIED-2026` authority for a CPNS
   field. A CPNS config that carries it as `VERIFIED-2026` → `REGULATORY_PATHWAY_MISMATCH`.
 - A basis whose document scope / instrument ID cannot establish CPNS applicability for the config's
-  cycle keeps its field `UNVERIFIED` → the config stays `provisional` and requires approval
-  (`REGULATORY_SCOPE_UNVERIFIED`).
+  cycle keeps its field `UNVERIFIED` → the config stays `provisional` and `REGULATORY_SCOPE_UNVERIFIED`
+  blocks any verdict; the session is still scored (§5.6), and approval is required **only** to emit the
+  verdict.
 
 A CPNS-2026 threshold that has no matching CPNS instrument therefore remains `provisional`
 ([CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §4.4) and its verdict requires approval — PF-12
@@ -599,6 +703,27 @@ type SessionSnapshot = {
   regulatoryBasisHash: string;                // hash of the ordered BasisRef[] used
   provisionalApproval?: ProvisionalApproval;  // §11 — frozen copy, present iff required and valid
 
+  // Session assembly, frozen (PACKAGE_SPECIFICATION.md §5)
+  packageBinding: {
+    packageId: string;
+    packageVersion: number;
+    mode: 'tryout' | 'latihan';
+    kind: 'full_simulation' | 'subtest' | 'submateri';
+    rosterHash: string;                       // sha256 over ordered questionIds
+  };
+  roster: {
+    repeatCount: number;                      // items already answered before this session
+    attemptedBefore: number;                  // how many roster items were seen at least once
+  };
+
+  // Timing, frozen — recorded, never scored (§8)
+  timing: {
+    mode: 'accumulated_active';               // §8.1
+    durationMs: number | null;                // the length the session was started with; null = unset
+    activeMsAtStart: number;                  // always 0 for a new session
+    autoSubmitOnExpiry: boolean;              // true when durationMs is set
+  };
+
   // Question content and keys, frozen
   taxonomyVersion: string;
   questions: Array<{
@@ -626,28 +751,84 @@ type SessionSnapshot = {
   still scores correctly in the session that used it.
 - `ScoreResult.snapshotVersion` is stored, so a result can always be re-derived byte-identically.
 - Snapshots are never garbage-collected while a session referencing them exists.
+- **The package binding is part of the snapshot** so a session's roster and the package version that
+  produced it can always be read back together — a later package version never describes an earlier
+  session ([PACKAGE_SPECIFICATION.md](../product/PACKAGE_SPECIFICATION.md) §5).
 
 **Approval validity is bound into the snapshot, not read live.** `provisionalApproval` is a copy taken
 at snapshot time. PF-13 checks it against the snapshot's own `configVersion`/`scoringVersion`/
 `regulatoryBasisHash` — so the snapshot protects both question correctness *and* which rule set the
-user actually authorized (§11).
+user actually authorized (§11). A snapshot **without** an approval is still scorable: it yields a score
+and no threshold verdict (§5.6).
 
 **Re-scoring** is permitted only by re-running scoring on the **same** snapshot. The app never
 re-scores an old session under a new snapshot.
+
+### 7.1 History: immutable, and the one way it leaves
+
+A finished result is **immutable**: no edit, no config change and no re-approval alters it.
+
+The user may **delete history** — a session, or a range of sessions — as an explicit act. This is the
+only path by which a stored result stops existing, and its mechanics are owned by
+[ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) §7. What scoring guarantees:
+
+1. Deletion removes the session, its answers, its result **and** its snapshot together; a half-deleted
+   session is never observable.
+2. Nothing derived is recomputed from a deleted session; analytics are derived-on-read
+   ([ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) §7.3), so a deleted session simply stops
+   contributing.
+3. A `session_deletion` tombstone is kept (id, mode, dates, counts — no answers, no stem text) so an
+   empty analytics panel can say *why* it is empty instead of looking like a bug. **The tombstone is not a
+   permanent purge**: physical erasure is unresolved
+   ([ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) §7.7).
+4. No background process ever deletes a session.
 
 ---
 
 ## 8. Determinism and timestamps
 
 - `answeredAt` is never read by scoring. It is copied into the result only if a debug view requests it.
-- The timer's `deadline` is read at submit to decide *whether* the session is auto-submitted; it never
-  changes *how* answers score. A session submitted at T or T+1 s with identical answers scores
-  identically (invariant 2).
 - Counting thresholds, totals and buckets involve integers only. No `Math.round`, no `toFixed`, no
   percentages in `ScoreResult`.
 - Given the same `SessionSnapshot` and answer sheets, `scoreSession` is a pure function — a property
   test asserting `scoreSession(x)` deep-equals `scoreSession(x)` belongs in the backend test suite when
   the backend is built.
+
+### 8.1 Session timing — accumulated active time
+
+**Duration is accumulated active time, not calendar time.** Closing the browser, switching tabs or a
+crash must not consume the learner's time.
+
+```ts
+type SessionClock = {
+  mode: 'accumulated_active';
+  durationMs: number | null;   // null = no countdown
+  activeMs: number;            // accumulated only while the session is "active"
+  runningSince: string | null; // set while active; null while paused
+};
+```
+
+Rules:
+
+1. **Active** means the runner is open and the session is not paused. `activeMs` grows only between
+   `runningSince` and "now" while active.
+2. **Leaving pauses.** Navigating away, closing the tab or closing the app pauses the clock: the
+   server's answer-save call (or the last heartbeat) stores `activeMs` and clears `runningSince`.
+   Autosave and the clock update in the same request, so an answer is never saved without its time.
+3. **Returning resumes.** Opening an `open` session resumes it: `runningSince` is set again and
+   `activeMs` continues from the stored value.
+4. **Expiry is checked on resume, not on a wall clock.** When `durationMs` is set and
+   `activeMs ≥ durationMs` on resume, the session is on expiry: the server marks it expired and
+   submits it with the answers already saved. The client never decides this — a client cannot outlive
+   a reload and a client clock is untrusted.
+5. **Submit before expiry is always allowed**; the accumulated time is recorded on the result as
+   evidence (`ScoreResult.timing`), never as a scoring input.
+6. **`durationMs = null`** means the session has no countdown (Latihan always; a config with no asserted
+   duration). The runner then shows elapsed active time, and states that there is no time limit.
+7. **The timer never changes how answers score.** Two sessions with identical answers and snapshots
+   score identically whether the first finished in 10 minutes and the second in 90 (invariant 2).
+8. **Response time** (per-question, for analytics) is recorded per answer from the same clock; it is an
+   analytics join, never a scoring field ([ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) §1).
 
 ---
 
@@ -688,7 +869,8 @@ Key `{A:0, B:5, C:0, D:0, E:0}`, unanswered `0`.
 
 ### 10.2 TKP — minimum-weight option vs blank
 
-Key `{A:5, B:4, C:3, D:2, E:1}`, unanswered `0`, range `[1,5]`.
+Key `{A:5, B:4, C:3, D:2, E:1}`, unanswered `0`, range `[1,5]`. (Different weights from §3.2's
+`{A:5, B:4, C:2, D:1, E:1}` on purpose — both are valid; no §3.2 weight set is a rule, SC-05.)
 
 | Answer | Earned | correct |
 |---|---|---|
@@ -714,7 +896,8 @@ Metrics downstream: TWK accuracy 7/10 = 70 %, TIU 5/10 = 50 %, TKP attainment 30
 
 ### 10.4 Time-out mid-session
 
-30 of 110 answered; the remaining 80 are `selected: null` → `unansweredScore`. `possible` still
+30 of 110 items answered — a roster sized like the real exam's 110 items rather than the 30-item example
+of §10.3; the remaining 80 are `selected: null` → `unansweredScore`. `possible` still
 includes them (80 × maxScore), `answeredCount` reflects only the 30, so attainment is honest about the
 unanswered mass and accuracy's denominator excludes it. No partial credit.
 
@@ -724,7 +907,8 @@ Config `mode: 'per_subtest_and_total'`, thresholds TWK 60 / TIU 70 / TKP 150 / t
 round numbers, not any real NAB**; real values live only in
 [CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3. Assume a roster large enough that each
 threshold is at or below its `maxPossible` (PF-09 enforces this). Session earns TWK 70 / TIU 85 /
-TKP 170.
+TKP 170. (The ceiling is the instrument maximum, §5.3 — not the roster: a 60-question drill would
+still admit a 550 total.)
 
 Total = 325 ≥ 300 ✓, TWK 70 ≥ 60 ✓, TIU 85 ≥ 70 ✓, TKP 170 ≥ 150 ✓ → `passed: true`. Because the
 basis tier is not `VERIFIED-2026` for the CPNS pathway, `noticeRequired: true` and the UI renders the
@@ -734,8 +918,10 @@ provisional notice beside the verdict.
 
 ## 11. Approval integrity
 
-Scoring a `provisional` config (or any verdict whose threshold basis is not `VERIFIED-2026` for the
-pathway, §6.7) requires a valid `ProvisionalApproval`, **bound into the snapshot**.
+Scoring a **verdict** on a `provisional` config (or any verdict whose threshold basis is not
+`VERIFIED-2026` for the pathway, §6.7) requires a valid `ProvisionalApproval`, **bound into the
+snapshot**. Scoring a provisional config **without** thresholds needs no approval: the session is
+scored and carries no verdict (§5.6).
 
 ```ts
 type ProvisionalApproval = {
@@ -749,15 +935,32 @@ type ProvisionalApproval = {
 };
 ```
 
+**Canonical definition.** The shape above is defined once, in
+[CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §4.3; it is repeated here only because §6,
+§7 and §11 bind it. `configId` and `approvedByUserAt` are both present and are **not**
+interchangeable: `configId` identifies *which configuration record* was approved (two provisional
+configs can share a version number), `approvedByUserAt` says *when*. `AGENTS.md` non-negotiable 3,
+ADR-004, `BUSINESS_RULES.md` BR-E3, `VALIDATION.md` §2 and `DATABASE_SCHEMA.md` §2 all name the same
+four bound values `{configId, configVersion, scoringVersion, regulatoryBasisHash}`; nothing else
+binds.
+
 **How the approval reaches pre-flight.** At session start the server copies the approval into
 `snapshot.provisionalApproval`. Pre-flight hands the snapshot to PF-13, which checks the approval
 against the snapshot's **own** bound values:
 
-| Condition | Error |
+| Condition | Effect |
 |---|---|
-| `state === 'provisional'` (or non-verified-for-pathway basis) but no approval in snapshot | `APPROVAL_MISSING` |
-| `approval.configId !== snapshot.configId` or `approval.configVersion !== snapshot.configVersion` or `approval.scoringVersion !== snapshot.scoringVersion` or `approval.regulatoryBasisHash !== snapshot.regulatoryBasisHash` | `APPROVAL_INVALID` |
-| A newly granted approval targets a different `configVersion`/`scoringVersion` than the snapshot froze | `APPROVAL_VERSION_MISMATCH` |
+| No approval in snapshot, and `thresholds.mode === 'none'` | **No error.** Session scores; `thresholds: { mode: 'none' }`; no verdict (§5.6) |
+| No approval in snapshot, and `thresholds.mode !== 'none'` | `APPROVAL_MISSING` — **the verdict is withheld, the score is kept** |
+| Approval present, any bound value differs from the snapshot | `APPROVAL_INVALID` — verdict withheld, score kept |
+| Approval present but targets other `configVersion`/`scoringVersion` than the snapshot froze | `APPROVAL_VERSION_MISMATCH` — verdict withheld, score kept |
+
+**Score and verdict are separate outputs (§5.6).** A pre-flight approval failure never discards a score:
+the session is submitted, scored from its frozen snapshot, and stored with `verdict: null` plus the
+approval error that caused it. The result screen shows the score and states that no passing threshold is
+verified for this session's config. `PREFLIGHT_FAILED` (semantic corruption of the snapshot or answer
+sheets) remains a hard abort with no result — that is a different failure class and it is unaffected by
+this rule.
 
 All four bound values must match the snapshot, not the live config. That is the point: the approval
 authorizes the **rule set frozen in this session**, never whatever the config currently is.
@@ -766,9 +969,38 @@ authorizes the **rule set frozen in this session**, never whatever the config cu
 
 | Point | Behaviour |
 |---|---|
-| Approval lapsed but config unchanged | The user re-approves the **same** `configVersion`/`scoringVersion`/`regulatoryBasisHash`. PF-13 matches the snapshot → `POST /sessions/:id/score` re-runs pre-flight on the **same** snapshot and succeeds. |
-| Config edited mid-session (bumped `configVersion` or `scoringVersion`, or basis changed) | The snapshot still froze the **old** values. Re-approving the new config produces an approval for the *new* values → `APPROVAL_VERSION_MISMATCH`. The old session is **permanently unscored**, answers are preserved, and the user starts a new session under the new snapshot. The app never silently re-scores an old session under a newer rule set. |
-| Submit with invalid approval | HTTP 409 `APPROVAL_INVALID`, `details.changed[]` as `{field, approved, current}` for the mismatched bound value(s) — see [API_SPECIFICATION.md](../backend/API_SPECIFICATION.md) §4.2. Session stored `unscored`, answers preserved. |
+| Approval lapsed but config unchanged | The user re-approves the **same** `configVersion`/`scoringVersion`/`regulatoryBasisHash`. PF-13 matches the snapshot → `POST /sessions/:id/score` re-runs pre-flight on the **same** snapshot and succeeds, now emitting a verdict. |
+| Config edited mid-session (bumped `configVersion` or `scoringVersion`, or basis changed) | The snapshot still froze the **old** values. Re-approving the new config produces an approval for the *new* values → `APPROVAL_VERSION_MISMATCH`. The old session is **permanently verdict-less**, answers and score are preserved, and the user starts a new session under the new snapshot. The app never silently re-scores an old session under a newer rule set. |
+| Submit with invalid approval | The session is scored; the `200` result carries `withheld.code` plus `withheld.changed[]` as `{field, approved, current}` for the mismatched bound value(s) — see [API_SPECIFICATION.md](../backend/API_SPECIFICATION.md) §4.2. Answers and score preserved. (In a `200` result there is no `error.details`; `details.changed[]` belongs to the `409 THRESHOLD_CONFIG_INVALID` envelope only.) |
+| Precedence when several PF-xx fail at once | See §11.1. |
+
+### 11.1 Error precedence — which code the client sees
+
+Pre-flight collects **all** failures (§6), so one submit can violate several gates. Blocking failures are
+ranked first and return an error status carrying exactly one `error.code`; verdict-only outcomes then
+appear inside a successful `200` result. Resolution order, first match wins:
+
+1. `REGULATORY_PATHWAY_MISMATCH` / `REGULATORY_YEAR_MISMATCH` / `REGULATORY_SCOPE_UNVERIFIED` (PF-12).
+   A config whose scope is wrong is not a config to be re-approved; it must be rebuilt.
+2. `THRESHOLD_CONFIG_INVALID` (PF-09) — the threshold block is malformed regardless of approval; a
+   genuine block, nothing scored.
+3. `PREFLIGHT_FAILED` (422) — every remaining PF-xx/SC-xx failure, listed in full in
+   `error.details.errors[]`.
+4. **Verdict-only, inside a `200` result** (the score is written first, so these never cost a score):
+   `APPROVAL_VERSION_MISMATCH` before `APPROVAL_INVALID` before `APPROVAL_MISSING` (PF-13), because the
+   most specific diff is the most actionable. Only one appears in `withheld.code`; the others remain
+   visible in `withheld.changed[]` where they apply.
+
+Every failure in the set is still reported inside `details.errors[]` (code + path) even when a
+higher-ranked code supplies `error.code`; the ranking decides the HTTP code and the primary UI
+surface, never what is hidden. A submit that is both an approval problem and an answer-sheet problem
+therefore returns 409 *and* lists the sheet errors, so the user fixes both in one pass.
+
+Codes 1 and 2 are 409 and code 3 is 422. Code 4 is not an error status at all: it travels inside the `200`
+result. The stored `score_result.blockedErrorCode` records the ranked **blocking** code (1–3); a
+verdict-only code (4) is written to `verdictWithheldJson` and the score is stored in full (§5.6,
+[DATABASE_SCHEMA](../backend/DATABASE_SCHEMA.md) §2). For code 3 nothing is written: the answer sheets or
+the snapshot are unusable, so there is no score to keep.
 
 `ScoreResult.approval` stores a `ScoreApprovalRef` (§2.2) recording which approval authorized the
 verdict: `approvedByUserAt`, `approvedBy`, the `configVersion` it authorized, and its
@@ -785,6 +1017,7 @@ This file defines scoring. Do not duplicate any table from here elsewhere; link 
 |---|---|
 | [CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) | Exam rules, threshold *values*, evidence tiers, config states, `BasisRef` (with pathway/year), approval record. This file adds the *validation* of those, not new values. |
 | [QUESTION_SPECIFICATION.md](./QUESTION_SPECIFICATION.md) §5 | Question lifecycle. Its V-06 delegates key shape to **§6.1** here (SC-01…SC-08); it must not restate SC rules. |
-| [ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) | Consumes `ScoreResult` (`earned`/`possible`/`answeredCount`/`correctCount`); owns accuracy vs attainment, minimum sample, trends. |
-| [API_SPECIFICATION.md](../backend/API_SPECIFICATION.md) | Error codes `PREFLIGHT_FAILED`, `APPROVAL_INVALID`, `APPROVAL_VERSION_MISMATCH`, `THRESHOLD_CONFIG_INVALID` in the error envelope. |
+| [PACKAGE_SPECIFICATION.md](../product/PACKAGE_SPECIFICATION.md) | Roster assembly and the repeat rule; this file freezes the result (`packageBinding`, `roster`). Selection is not scoring (§7.1 of that doc, §4.4). |
+| [ANALYTICS_ENGINE.md](../backend/ANALYTICS_ENGINE.md) | Consumes `ScoreResult` (`earned`/`possible`/`answeredCount`/`correctCount`); owns accuracy vs attainment, minimum sample, trends, history deletion. |
+| [API_SPECIFICATION.md](../backend/API_SPECIFICATION.md) | Error codes `PREFLIGHT_FAILED`, `APPROVAL_INVALID`, `APPROVAL_VERSION_MISMATCH`, `APPROVAL_MISSING`, `THRESHOLD_CONFIG_INVALID` in the error envelope; the `ScoreResult` wire payload (§5). |
 | [PRD.md](../product/PRD.md) | FR-A1 (per-test/per-competency **accuracy**, served by `correctCount`/`answeredCount`; **mean response time** is an analytics concern from `AnswerSheet.answeredAt`, not a scoring output), FR-A3 (difficulty analysis), FR-T7 (unscorable session stored, never a fake zero). |

@@ -13,13 +13,19 @@ Related: [CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3 · [SCORIN
 | Level | Source | Tier |
 |---|---|---|
 | SKD = TWK + TIU + TKP | Permen PANRB 6/2024 Pasal 30(3) | `VERIFIED-CURRENT` |
-| **Domain and sub-domain names below** | Kepmen PANRB 406/2026 Diktum KEDUA (Sekolah Kedinasan TA 2026), read in full | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| The same framework for CPNS specifically | None obtained for CPNS 2026 | not claimed |
+| **Domain and sub-domain names below** | Names read verbatim in a fetched 2026 assessment-year document, plus prior CPNS-cycle SKD practice; full record in [CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3 | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| The same framework for CPNS specifically | No CPNS-2026 kisi-kisi obtained | not claimed |
 
-`VERIFIED-2026-SEKOLAH-KEDINASAN` means: the name is written verbatim in a 2026 assessment-year
-document, but that document's scope is the Sekolah Kedinasan pathway. It is **not** presented as a
-published CPNS 2026 kisi-kisi. See [CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3 and
-UNV-08.
+`EVIDENCE-BACKED-NOT-CPNS-2026` means: **the names below are the working structure of this product; they
+are not a published CPNS 2026 kisi-kisi.** The evidence record that produced the names is kept in
+[CPNS_2026_REGULATIONS.md](./CPNS_2026_REGULATIONS.md) §2.3 and §8 (UNV-08, BR-E1). That record is an
+evidence register, **not** product scope: the product is CPNS-only ([PRD.md](../product/PRD.md) §4), and
+no other pathway appears in any screen, package, config list or report.
+
+> **Renamed 2026-11-08.** The former tier name `EVIDENCE-BACKED-NOT-CPNS-2026` is retired: a node tier
+> must not be readable as a verification claim for another pathway. Node IDs and node data are
+> unchanged, so historical records keep resolving. Recorded in
+> [../audit/SYSTEM_REVISION_REPORT.md](../audit/SYSTEM_REVISION_REPORT.md) §A3.
 
 Consequence: the taxonomy **ships as data with a tier per node**, so when a CPNS-2026 instrument
 publishes its own kisi-kisi, the editor changes node data only — schema, analytics and prompts are
@@ -46,7 +52,8 @@ type CompetencyNode = {
   parentId: string | null;
   label: { id: string; en?: string };
   officialGoal?: string;   // the regulation's stated purpose, transcribed (§6)
-  tier: 'VERIFIED-2026-SEKOLAH-KEDINASAN' | 'UNVERIFIED' | 'DEPRECATED';
+  tier: 'EVIDENCE-BACKED-NOT-CPNS-2026' | 'UNVERIFIED' | 'DEPRECATED';
+  // 'CPNS-2026-VERIFIED' is reserved for a node backed by a fetched CPNS 2026 kisi-kisi. No node ships with it.
   deprecated?: boolean;
   replacedBy?: string;
 };
@@ -56,15 +63,15 @@ type CompetencyNode = {
 
 ## 3. TWK — Tes Wawasan Kebangsaan
 
-Kepmen PANRB 406/2026 Diktum KEDUA huruf a. **Five domains, no sub-domains.**
+**Five domains, no sub-domains.**
 
 | id | label (id) | tier |
 |---|---|---|
-| `TWK.NASIONALISME` | Nasionalisme | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TWK.INTEGRITAS` | Integritas | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TWK.BELA_NEGARA` | Bela negara | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TWK.PILAR_NEGARA` | Pilar negara | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TWK.BAHASA_NEGARA` | Bahasa negara | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
+| `TWK.NASIONALISME` | Nasionalisme | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TWK.INTEGRITAS` | Integritas | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TWK.BELA_NEGARA` | Bela negara | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TWK.PILAR_NEGARA` | Pilar negara | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TWK.BAHASA_NEGARA` | Bahasa negara | `EVIDENCE-BACKED-NOT-CPNS-2026` |
 
 > **Correction recorded.** An earlier draft of this file listed `TWK.PANCASILA`, `TWK.UUD45`,
 > `TWK.BHINEKA`, `TWK.NKRI`. Pancasila, UUD 1945, NKRI and Bhinneka Tunggal Ika are **contents of
@@ -75,20 +82,18 @@ Kepmen PANRB 406/2026 Diktum KEDUA huruf a. **Five domains, no sub-domains.**
 
 ## 4. TIU — Tes Intelegensia Umum
 
-Kepmen PANRB 406/2026 Diktum KEDUA huruf b.
-
 | id | label (id) | tier |
 |---|---|---|
-| `TIU.VERBAL.ANALOGI` | Analogi | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.VERBAL.SILOGISME` | Silogisme | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.VERBAL.ANALITIS` | Analitis | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.NUMERIK.BERHITUNG` | Berhitung | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.NUMERIK.DERET` | Deret angka | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.NUMERIK.PERBANDINGAN_KUANTITATIF` | Perbandingan kuantitatif | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.NUMERIK.SOAL_CERITA` | Soal cerita | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.FIGURAL.ANALOGI` | Figural — analogi | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.FIGURAL.KETIDAKSAMAAN` | Figural — ketidaksamaan | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TIU.FIGURAL.SERIAL` | Figural — serial | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
+| `TIU.VERBAL.ANALOGI` | Analogi | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.VERBAL.SILOGISME` | Silogisme | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.VERBAL.ANALITIS` | Analitis | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.NUMERIK.BERHITUNG` | Berhitung | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.NUMERIK.DERET` | Deret angka | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.NUMERIK.PERBANDINGAN_KUANTITATIF` | Perbandingan kuantitatif | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.NUMERIK.SOAL_CERITA` | Soal cerita | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.FIGURAL.ANALOGI` | Figural — analogi | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.FIGURAL.KETIDAKSAMAAN` | Figural — ketidaksamaan | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TIU.FIGURAL.SERIAL` | Figural — serial | `EVIDENCE-BACKED-NOT-CPNS-2026` |
 
 Domain roll-ups: `TIU.VERBAL`, `TIU.NUMERIK`, `TIU.FIGURAL`.
 
@@ -96,28 +101,30 @@ Domain roll-ups: `TIU.VERBAL`, `TIU.NUMERIK`, `TIU.FIGURAL`.
 
 ## 5. TKP — Tes Karakteristik Pribadi
 
-Kepmen PANRB 406/2026 Diktum KEDUA huruf c. **Six domains, no sub-domains.**
+**Six domains, no sub-domains.**
 
 | id | label (id) | tier |
 |---|---|---|
-| `TKP.PELAYANAN_PUBLIK` | Pelayanan publik | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TKP.JEJARING_KERJA` | Jejaring kerja | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TKP.SOSIAL_BUDAYA` | Sosial budaya | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TKP.TIK` | Teknologi informasi dan komunikasi | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TKP.PROFESIONALISME` | Profesionalisme | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
-| `TKP.ANTI_RADIKALISME` | Anti radikalisme | `VERIFIED-2026-SEKOLAH-KEDINASAN` |
+| `TKP.PELAYANAN_PUBLIK` | Pelayanan publik | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TKP.JEJARING_KERJA` | Jejaring kerja | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TKP.SOSIAL_BUDAYA` | Sosial budaya | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TKP.TIK` | Teknologi informasi dan komunikasi | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TKP.PROFESIONALISME` | Profesionalisme | `EVIDENCE-BACKED-NOT-CPNS-2026` |
+| `TKP.ANTI_RADIKALISME` | Anti radikalisme | `EVIDENCE-BACKED-NOT-CPNS-2026` |
 
 TKP questions are scenario-based with weighted options — see
 [SCORING_METHODOLOGY.md](./SCORING_METHODOLOGY.md) §3.2.
 
 ---
 
-## 6. Official goal statements (transcribed, for prompt grounding)
+## 6. Goal statements (for prompt grounding)
 
-Used verbatim in generation prompts so a question targets the regulation's stated competency, not a
-model's guess at what "integritas" means.
+Used verbatim in generation prompts so a question targets a stated competency goal, not a model's guess
+at what "integritas" means. **These goals are working product data, not published CPNS 2026 text** (§1).
+Prompts must never present them as official wording
+([PROMPT_SPECIFICATION.md](../ai/PROMPT_SPECIFICATION.md) §1 rule 2).
 
-| Node | Goal (as stated in Diktum KEDUA) |
+| Node | Goal |
 |---|---|
 | `TWK.NASIONALISME` | Mampu mewujudkan kepentingan nasional melalui cita-cita dan tujuan yang sama dengan tetap mempertahankan identitas nasional |
 | `TWK.INTEGRITAS` | Mampu menjunjung tinggi kejujuran, ketangguhan, komitmen dan konsistensi sebagai satu kesatuan sikap untuk mencapai tujuan nasional |
@@ -156,6 +163,12 @@ model's guess at what "integritas" means.
    mapping is known, and bumps `tier` on surviving nodes.
 7. Shipping a node with tier `UNVERIFIED` requires the node to be visibly marked in the question
    editor; none ship at MVP.
+8. **Leaf nodes are the Latihan unit.** The Latihan picker lists leaf nodes (submateri) with their
+   `label.id`; a package targets one or more leaves
+   ([PACKAGE_SPECIFICATION.md](../product/PACKAGE_SPECIFICATION.md) §6).
+9. **Materials map to nodes or to nothing.** A competency- or domain-scoped material binds to a node here;
+   a free note binds to no node and never affects competency analytics
+   ([MATERIAL_SPECIFICATION.md](./MATERIAL_SPECIFICATION.md) §2).
 
 ---
 
@@ -163,4 +176,4 @@ model's guess at what "integritas" means.
 
 Ships as a typed constant in `frontend/src/mocks/taxonomy.ts` (mock layer) and as a seed table in the
 backend schema (`competency_nodes`). Both derive from this document; the document is canonical and
-any divergence is a bug.
+any divergence is a bug. No frontend or backend file was changed by the 2026-11-08 revision.

@@ -52,16 +52,22 @@ Buat {{count}} soal pilihan ganda untuk kompetensi:
 Setiap soal:
 - 5 opsi bertanda A, B, C, D, E.
 - Untuk TKP (Tes Karakteristik Pribadi): skenario perilaku; setiap opsi diberi bobot 1–5
-  (5 = paling tepat), tanpa opsi bernilai 0.
-- Untuk TWK/TIU: tepat satu jawaban benar.
+  (5 = paling tepat), tanpa opsi bernilai 0. Sertakan juga "optionJustifications": untuk SETIAP
+  huruf opsi, satu kalimat mengapa opsi itu memperoleh bobot tersebut.
+- Untuk TWK/TIU: tepat satu jawaban benar; tanpa "optionJustifications".
 - Kunci jawaban disertakan sebagai struktur optionScores (lihat skema).
 - TIDAK menuliskan "Soal Resmi", "Soal CPNS/BKN", atau logo resmi.
 
 Output JSON sesuai skema:
 { "questions": [ { "stem": ..., "options": [{"key":"A","text":...}, ...],
-  "answerKey": { "optionScores": {...}, "unansweredScore": 0, "maxScore": 5 },
+  "answerKey": { "optionScores": {...}, "optionJustifications": {"A": "...", ...},
+                 "unansweredScore": 0, "maxScore": 5 },
   "explanation": ... } ] }
 ```
+
+`optionJustifications` is TKP-only and belongs to the answer key
+([QUESTION_SPECIFICATION](../examination/QUESTION_SPECIFICATION.md) §1.2); it is what the review screen
+shows beside each option's weight.
 
 The factual content slot `{{goal}}` and the prohibition on official framing are invariant; the rest is
 wording. A CPNS-2026 instrument change updates the taxonomy data, not this template body.
