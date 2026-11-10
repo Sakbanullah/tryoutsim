@@ -211,7 +211,7 @@ export function normaliseSnapshot(row) {
     scoringRules: config.scoringRules,
     // §5.4: a threshold whose basis is a VERIFIED-2026 instrument for this config's own pathway needs no approval.
     thresholdBasisIsAuthority: source?.tier === 'VERIFIED-2026' && source?.pathway === config.pathway,
-    thresholds: thresholds?.mode === 'none' ? null : thresholds ?? null,
+    thresholds: thresholds?.mode === 'none' ? { mode: 'none' } : thresholds ?? null,
     thresholdMode: thresholds?.mode ?? 'none',
     questions: parseJson(row.questionsJson),
     answerKeys: parseJson(row.answerKeysJson),
@@ -509,7 +509,9 @@ async function scoreOnce(prisma, session, sheets, nowMs, nowIso) {
 
   const outcome = preflight({
     snapshot,
-    basisRefs: liveConfig ? [{ tier: 'VERIFIED-2026', pathway: liveConfig.pathway, examYear: liveConfig.examYear }] : [],
+    // PF-12 reads the config's own `BasisRef[]`, frozen into the snapshot (SCORING_METHODOLOGY §6.7). Synthesising
+    // one from the live config would drop every other basis and turn a mismatch into a false pass.
+    basisRefs: snapshot.basis,
     sheets,
     taxonomy,
     liveConfig: { pathway: liveConfig?.pathway, examYear: liveConfig?.examYear },
@@ -598,7 +600,7 @@ export async function submitSession(prisma, sessionId, overrideSheets, nowMs, no
   const session = await requireSession(prisma, sessionId);
   assertSubmittable(session);
 
-  const sheets = overrideSheets ?? (await prisma.answerSheet.findMany({ where: { sessionId } })).map(toSheet);
+  const sheets = overrideSheets ?? completeSheets(await requireSnapshot(prisma, sessionId), await storedSheets(prisma, sessionId));
   const stored = await scoreAndStore(prisma, session, sheets, nowMs, nowIso);
 
   try {
@@ -627,15 +629,17 @@ export async function rescoreSession(prisma, sessionId, nowMs, nowIso) {
     throw conflict('session', session.status === 'open' ? 'not_submitted' : 'not_resubmittable', 'Only a submitted session can be scored.');
   }
   const stored = await loadScoreResult(prisma, sessionId);
+  // A blank is stored as a missing row, so both paths complete the sheet set the same way submit does (PF-01).
+  const sheets = completeSheets(await requireSnapshot(prisma, sessionId), await storedSheets(prisma, sessionId));
   if (stored === null) {
-    const scored = await scoreAndStore(prisma, session, await storedSheets(prisma, sessionId), nowMs, nowIso);
+    const scored = await scoreAndStore(prisma, session, sheets, nowMs, nowIso);
     const row = await loadScoreResult(prisma, sessionId);
     // A concurrent submit may have written first; the stored row wins.
     return row ? pickResult(row.result, row.verdict) : pickResult(scored, scored.verdict);
   }
   if (stored.verdict !== null) return pickResult(stored.result, stored.verdict);
 
-  const fresh = await scoreOnce(prisma, session, await storedSheets(prisma, sessionId), nowMs, nowIso);
+  const fresh = await scoreOnce(prisma, session, sheets, nowMs, nowIso);
   if (scoreFingerprint(fresh) !== scoreFingerprint(stored.result)) {
     throw conflict('session', 'verdict_only_change_forbidden', 'A stored result may only gain its verdict; its score cannot change.');
   }
@@ -648,6 +652,23 @@ export async function rescoreSession(prisma, sessionId, nowMs, nowIso) {
 /** The stored answers of a session as pre-flight/scoring sheets. */
 async function storedSheets(prisma, sessionId) {
   return (await prisma.answerSheet.findMany({ where: { sessionId } })).map(toSheet);
+}
+
+/**
+ * Every roster question exactly once (PF-01, SCORING_METHODOLOGY §6). A question the user left untouched has no
+ * `answer_sheet` row at all, so submitting without an explicit answer set fills in `selected: null` — a blank that
+ * never earns credit (invariant 11) — instead of failing `SHEET_COUNT_MISMATCH`. Duplicate rows are passed through
+ * untouched so PF-02 still reports them; this only adds missing ids.
+ * @param {object} snapshot normalised snapshot
+ * @param {{questionId: string, selected: string | null}[]} stored
+ * @returns {{questionId: string, selected: string | null}[]}
+ */
+function completeSheets(snapshot, stored) {
+  const present = new Set(stored.map((sheet) => sheet.questionId));
+  const missing = (snapshot.questions ?? [])
+    .filter((question) => !present.has(question.questionId))
+    .map((question) => ({ questionId: question.questionId, selected: null }));
+  return [...stored, ...missing];
 }
 
 /**

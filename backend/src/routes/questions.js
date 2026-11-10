@@ -112,6 +112,27 @@ async function assertNoDuplicate(pool, input) {
 }
 
 /**
+ * The `scoringVersion` a new answer key is authored against: the same config resolution a session uses
+ * (CPNS_2026_REGULATIONS §4.2.1 order 2, `session.js` `resolveConfig`). Row-safe through raw SQL because this route
+ * holds the pool, not the Prisma client.
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<number>}
+ */
+async function currentScoringVersion(pool) {
+  const { rows } = await pool.query(
+    `SELECT "scoringVersion" FROM "exam_config"
+      WHERE "pathway" = 'CPNS' AND "dataProvenance" = 'seed' AND "state" IN ('official_verified', 'provisional')
+      ORDER BY ("state" = 'official_verified') DESC, "configVersion" DESC, "id" ASC
+      LIMIT 1`,
+  );
+  const version = rows[0]?.scoringVersion;
+  if (typeof version !== 'number') {
+    throw conflict('exam_config', 'no_usable_config', 'No CPNS examination configuration can back a question.');
+  }
+  return version;
+}
+
+/**
  * Register the question, report and batch routes.
  * @param {ReturnType<import('../http/router.js').createRouter>} router
  * @param {{pool: import('pg').Pool}} deps
@@ -145,6 +166,9 @@ export function registerQuestionRoutes(router, { pool }) {
     const createdAt = nowIso();
 
     const provenance = { kind: 'human_authored', sampling: { status: 'not_applicable' } };
+    // SCORING_METHODOLOGY §2.2: an answer key carries the `scoringVersion` its weights were authored against. The
+    // client does not supply it; the live config's version is the one a session frozen from it will check (PF-04).
+    const scoringVersion = await currentScoringVersion(pool);
     const question = {
       id,
       test: input.test,
@@ -152,7 +176,7 @@ export function registerQuestionRoutes(router, { pool }) {
       stimulus: input.stimulus,
       stem: input.stem,
       optionsJson: input.options,
-      answerKey: input.answerKey,
+      answerKey: { ...input.answerKey, scoringVersion },
       explanation: input.explanation,
       difficultyAiInitial: input.difficultyAiInitial,
       lifecycle: 'draft',

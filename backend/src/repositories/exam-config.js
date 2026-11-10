@@ -149,14 +149,17 @@ export async function approveConfig(prisma, configId, body, nowIso) {
 
   const id = `apr_${randomUUID()}`;
   const approval = {
+    id,
     configId: config.id,
     configVersion: config.configVersion,
     scoringVersion: config.scoringVersion,
     regulatoryBasisHash: config.regulatoryBasisHash,
     approvedByUserAt: nowIso,
     approvedBy: LOCAL_USER,
-    acknowledgedWarnings: acknowledged,
+    acknowledgedWarningsJson: JSON.stringify(acknowledged),
   };
-  await prisma.provisionalApproval.create({ data: { id, ...approval, acknowledgedWarningsJson: JSON.stringify(acknowledged) } });
-  return { approval, config: toConfigSummary(config, loaded.thresholds) };
+  // The table's columns only; `acknowledgedWarnings` is recomposed on read (`domain/approval.js`).
+  await prisma.provisionalApproval.create({ data: approval });
+  const { id: _id, acknowledgedWarningsJson: _json, ...wire } = approval;
+  return { approval: { ...wire, acknowledgedWarnings: acknowledged }, config: toConfigSummary(config, loaded.thresholds) };
 }

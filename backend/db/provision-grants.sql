@@ -21,6 +21,8 @@ BEGIN;
 -- G-8 ownership: every object in the database schema is owned by the migrator.
 -- (Already true if migrations ran as the migrator; asserted so that a stray
 -- object created by another role is a hard failure, not a silent gap.)
+-- `current_user` is the migrator: this file is run as that role. psql does not
+-- substitute `:'var'` inside a dollar-quoted body, so the variable cannot be used here.
 DO $$
 DECLARE stray int;
 BEGIN
@@ -29,14 +31,16 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname = 'public'
      AND c.relkind IN ('r', 'p', 'i', 'S', 'v')
-     AND pg_get_userbyid(c.relowner) <> :'migrator_role';
+     AND pg_get_userbyid(c.relowner) <> current_user;
   IF stray > 0 THEN
-    RAISE EXCEPTION '% object(s) in public are not owned by %', stray, :'migrator_role';
+    RAISE EXCEPTION '% object(s) in public are not owned by %', stray, current_user;
   END IF;
 END $$;
 
 -- G-1 the app role never holds CREATEDB, and never SUPERUSER.
-ALTER ROLE :"app_role" NOCREATEDB NOSUPERUSER NOCREATEROLE;
+-- Rule attributes (CREATEDB/SUPERUSER/CREATEROLE) are set at provisioning time by the
+-- superuser, not here: `ALTER ROLE … NOSUPERUSER` on another role needs SUPERUSER, which
+-- the migrator does not hold. See ProvisioningCommon.ps1 (Get-RoleAttributeSql).
 
 -- G-2 schema defaults: the app can use the schema and read/write tables the
 -- migrator creates later, but never create objects in it.

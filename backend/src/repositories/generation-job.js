@@ -35,6 +35,18 @@ import { raise } from './notification.js';
 const RAW_RESPONSE_LIMIT = 20000;
 
 /**
+ * Write a batch's decided row (GENERATION_JOBS §3, DATABASE_SCHEMA `generation_batch.status`). The row is created on
+ * its outcome, never up front: the schema admits only `completed | failed | interrupted`, so a batch that has not
+ * finished has no row. `upsert` also makes a re-run of the same batch idempotent after a retry deleted its row.
+ * @param {{generationBatch: {upsert: Function}}} client Prisma client or transaction client
+ * @param {{id: string, jobId: string, status: 'completed' | 'failed' | 'interrupted', failureCategory: string | null, rawResponseRef: string | null, draftQuestionIds: string}} row
+ * @returns {Promise<void>}
+ */
+function upsertDecidedBatch(client, row) {
+  return client.generationBatch.upsert({ where: { id: row.id }, create: row, update: row });
+}
+
+/**
  * Seams this domain does not own. Each is one call into another domain's
  * documented contract; the runner never reads another domain's tables.
  *
@@ -124,18 +136,8 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
           partial: 0,
         },
       });
-      for (const [index, size] of sizes.entries()) {
-        await tx.generationBatch.create({
-          data: {
-            id: `${jobId}-b${index + 1}`,
-            jobId,
-            status: 'queued',
-            failureCategory: null,
-            rawResponseRef: null,
-            draftQuestionIds: '[]',
-          },
-        });
-      }
+      // A batch row exists only once it has an outcome (GENERATION_JOBS §3, DATABASE_SCHEMA: `completed` | `failed` |
+      // `interrupted`). Which batches are pending is derived from `planBatches`, not stored as a row state.
     });
 
     schedule(jobId);
@@ -153,10 +155,7 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       const job = await prisma.generationJob.findUnique({ where: { id: jobId } });
       if (job === null) return;
       const batches = await prisma.generationBatch.findMany({ where: { jobId }, orderBy: { id: 'asc' } });
-      // Only `queued` batches run. `failed` waits for an explicit retry, and
-      // `interrupted` is never resumed automatically (§5).
-      const toRun = batches.filter((batch) => batch.status === 'queued');
-      if (toRun.length === 0) return;
+      if (batches.some((batch) => batch.status === 'interrupted')) return;
 
       const provider = await prisma.provider.findUnique({ where: { id: job.providerId } });
       if (provider === null) return;
@@ -167,11 +166,15 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       const sizes = planBatches({ count: job.count, maxContext: readCapability(provider, 'maxContext') ?? null });
       const competency = await seams.loadCompetency(competencyIds[0]);
 
-      for (const batch of toRun) {
-        const index = Number(batch.id.slice(batch.id.lastIndexOf('b') + 1)) - 1;
+      // A row exists only for a decided batch, so the batch that still needs a run is the lowest planned index with
+      // no row. `failed` waits for an explicit retry (§3); a retry deletes those rows, which puts them back here.
+      const existing = new Set(batches.map((batch) => Number(batch.id.slice(batch.id.lastIndexOf('b') + 1)) - 1));
+      for (let index = 0; index < sizes.length; index += 1) {
+        if (existing.has(index)) continue;
+        const batch = { id: `${jobId}-b${index + 1}` };
         await runBatch({ job, batch, transport, size: sizes[index] ?? 1, competency, competencyId: competency.id });
       }
-      await finalise(jobId);
+      await finalise(jobId, sizes.length);
     } finally {
       active.delete(jobId);
     }
@@ -203,18 +206,18 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       const parsed = parseJsonOutput(answer.content);
       const questions = parsed === null ? null : extractQuestions(parsed);
       if (questions === null) {
-        await prisma.generationBatch.update({
-          where: { id: batch.id },
-          data: { status: 'failed', failureCategory: parsed === null ? 'malformed_json' : 'schema_violation', rawResponseRef: raw },
+        await upsertDecidedBatch(prisma, {
+          id: batch.id, jobId: job.id, status: 'failed',
+          failureCategory: parsed === null ? 'malformed_json' : 'schema_violation', rawResponseRef: raw, draftQuestionIds: '[]',
         });
         return;
       }
       batchDone = { questions };
     } catch (error) {
       raw = raw ?? scrub(error instanceof Error ? error.message : String(error)).slice(0, RAW_RESPONSE_LIMIT);
-      await prisma.generationBatch.update({
-        where: { id: batch.id },
-        data: { status: 'failed', failureCategory: failureCategoryForError(error), rawResponseRef: raw },
+      await upsertDecidedBatch(prisma, {
+        id: batch.id, jobId: job.id, status: 'failed',
+        failureCategory: failureCategoryForError(error), rawResponseRef: raw, draftQuestionIds: '[]',
       });
       return;
     }
@@ -227,9 +230,9 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
         const questionId = await seams.insertDraft(tx, { jobId: job.id, batchId: batch.id, question, competencyId, index });
         if (questionId !== null) draftIds.push(questionId);
       }
-      await tx.generationBatch.update({
-        where: { id: batch.id },
-        data: { status: 'completed', failureCategory: null, rawResponseRef: raw, draftQuestionIds: JSON.stringify(draftIds) },
+      await upsertDecidedBatch(tx, {
+        id: batch.id, jobId: job.id, status: 'completed', failureCategory: null,
+        rawResponseRef: raw, draftQuestionIds: JSON.stringify(draftIds),
       });
     });
   }
@@ -239,13 +242,15 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
    * (NOTIFICATION_SPECIFICATION §5). Returns without writing if a batch is still
    * undecided.
    * @param {string} jobId
+   * @param {number} planned number of batches `planBatches` expects for this job
    */
-  async function finalise(jobId) {
+  async function finalise(jobId, planned) {
     const job = await prisma.generationJob.findUnique({ where: { id: jobId } });
     const batches = await prisma.generationBatch.findMany({ where: { jobId } });
     if (job === null) return;
     const decided = batches.filter((batch) => batch.status === 'completed' || batch.status === 'failed' || batch.status === 'interrupted');
-    if (decided.length !== batches.length) return;
+    // Every planned batch must have a row before the job can be closed: a batch row exists only once decided (§3).
+    if (decided.length !== batches.length || batches.length !== planned) return;
 
     const aggregate = aggregateJob(
       decided.map((batch) => ({
@@ -314,9 +319,11 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       const batches = await prisma.generationBatch.findMany({ where: { jobId: job.id } });
       const decision = restartDecision(
         job,
-        // No batch can be `running` (no sent marker is written), so a crash
-        // always resumes the queued batches — see the open question.
-        batches.map((batch) => ({ id: batch.id, status: /** @type {'queued' | 'committed'} */ (batch.status) })),
+        // A batch row exists only once decided, and a decided row is `completed`. Nothing is ever stored as `sent`
+        // (the schema has no sent marker), so a leftover row is reported as `committed` — its drafts are durable —
+        // and every un-rowed batch is `queued`. The consequence is stated, not hidden: a crash between send and
+        // commit re-runs that batch on restart.
+        batches.map((batch) => ({ id: batch.id, status: /** @type {'committed'} */ ('committed') })),
       );
       if (decision.action === 'resume') {
         resumed.push(job.id);

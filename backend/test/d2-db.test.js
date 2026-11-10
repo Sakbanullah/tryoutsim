@@ -20,6 +20,41 @@ import { createSession, deleteSession, loadResult, rescoreSession, saveAnswer, s
 
 const SKIP = !process.env.DATABASE_URL_APP && 'DATABASE_URL_APP is not set';
 
+/**
+ * A plain `pg` connection as the migrator, for fixture writes the app role is forbidden (append-only tables, the
+ * one-time package pin). Tests only; the runtime never holds this URL.
+ * @returns {Promise<{execute: (sql: string, params: unknown[]) => Promise<void>, end: () => Promise<void>}>}
+ */
+async function migratorConnection() {
+  const { default: pg } = await import('pg');
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  return {
+    execute: async (sql, params) => { await client.query(sql, params); },
+    end: () => client.end(),
+  };
+}
+
+/**
+ * Remove a fixture's rows. Append-only tables (`provisional_approval`, `package_version`) take the migrator
+ * connection: the app role is deliberately forbidden to change them, so a test cannot "clean up" as the app.
+ * @param {{execute: (sql: string, params: unknown[]) => Promise<void>}} migrator
+ * @param {import('../src/generated/prisma/client.ts').PrismaClient} prisma
+ * @param {string} tag fixture tag
+ * @param {{sessionIds?: string[], configIds?: string[]}} ids
+ */
+async function cleanupFixture(migrator, prisma, tag, { sessionIds = [], configIds = [] }) {
+  for (const id of sessionIds) await prisma.$queryRaw`SELECT tryoutsim.delete_session(${id})`.catch(() => undefined);
+  for (const configId of configIds) {
+    await migrator.execute('DELETE FROM "provisional_approval" WHERE "configId" = $1', [configId]).catch(() => undefined);
+  }
+  await prisma.examConfig.deleteMany({ where: { id: { in: configIds } } }).catch(() => undefined);
+  await migrator.execute('DELETE FROM "package_version" WHERE "packageId" = $1', [`pkg-${tag}`]).catch(() => undefined);
+  await prisma.package.deleteMany({ where: { id: `pkg-${tag}` } }).catch(() => undefined);
+  await prisma.question.deleteMany({ where: { id: { startsWith: `q-${tag}-` } } }).catch(() => undefined);
+  await prisma.competency.deleteMany({ where: { id: `TWK.${tag}` } }).catch(() => undefined);
+}
+
 /** Connect as the app role, or `null` with the reason. */
 async function database() {
   if (!process.env.DATABASE_URL_APP) return { db: null, reason: 'DATABASE_URL_APP is not set' };
@@ -30,6 +65,16 @@ async function database() {
   } catch (error) {
     return { db: null, reason: `database unreachable: ${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+/**
+ * A `configVersion` large enough that this fixture's config is the one `resolveConfig` picks (order 2: newest
+ * usable CPNS config). The database holds other tests' fixtures in parallel, so "version 1" is not unique.
+ * @param {string} tag
+ * @returns {number}
+ */
+function configVersionFor(tag) {
+  return 1_000_000 + Number(String(tag).replace(/\D/g, '').slice(-9));
 }
 
 /**
@@ -48,7 +93,7 @@ async function fixture(prisma, { tag, state = 'provisional' }) {
       data: {
         id: `q-${tag}-${i}`, test: 'TWK', competencyId: `TWK.${tag}`, stimulus: '', stem: `s${i}`,
         optionsJson: JSON.stringify({ options: ['A', 'B', 'C', 'D', 'E'].map((key) => ({ key, text: key })) }),
-        answerKeyJson: JSON.stringify({ optionScores: { A: 0, B: 5, C: 0, D: 0, E: 0 }, unansweredScore: 0, maxScore: 5 }),
+        answerKeyJson: JSON.stringify({ optionScores: { A: 0, B: 5, C: 0, D: 0, E: 0 }, unansweredScore: 0, maxScore: 5, scoringVersion: 1 }),
         explanation: 'e', difficultyAiInitial: 'easy', lifecycle: 'active', dynamicEligible: 1,
         provenanceJson: JSON.stringify({ kind: 'human' }), contentHash: `h-${tag}-${i}`, taxonomyVersion: '2026', contentVersion: 1,
       },
@@ -58,7 +103,7 @@ async function fixture(prisma, { tag, state = 'provisional' }) {
     data: {
       id: configId, pathway: 'CPNS', examYear: 2026, state, dataProvenance: 'seed', durationMinutes: 1,
       itemCount: 3, twkCount: 3, tiuCount: 0, tkpCount: 0, twkWeight: 5, tiuWeight: 5, tkpWeightMin: 1, tkpWeightMax: 5,
-      maxScore: 15, notice: 'UNV-01 uji', scoringVersion: 1, configVersion: 1, regulatoryBasisHash: `rh-${tag}`,
+      maxScore: 15, notice: 'UNV-01 uji', scoringVersion: 1, configVersion: configVersionFor(tag), regulatoryBasisHash: `rh-${tag}`,
     },
   });
   await prisma.thresholds.create({
@@ -83,23 +128,22 @@ test('session: snapshot, tryout duration, autosave clock, submit verdict follows
   if (db === null) return t.skip(reason);
   const prisma = /** @type {any} */ (db.prisma);
   const tag = `d2s${Date.now()}`;
-  const created = await fixture(prisma, { tag });
-  /** @type {string} */
-  let sessionId = '';
+  const migrator = await migratorConnection();
+  /** @type {string[]} */
+  const sessionIds = [];
+  // Registered before the fixture: a failing assertion must still clean up (no rows leak into later runs).
   t.after(async () => {
-    await prisma.$queryRaw`SELECT tryoutsim.delete_session(${sessionId})`.catch(() => undefined);
-    await prisma.examConfig.delete({ where: { id: created.configId } }).catch(() => undefined);
-    await prisma.package.delete({ where: { id: `pkg-${tag}` } }).catch(() => undefined);
-    await prisma.question.deleteMany({ where: { id: { startsWith: `q-${tag}-` } } }).catch(() => undefined);
-    await prisma.competency.delete({ where: { id: `TWK.${tag}` } }).catch(() => undefined);
+    await cleanupFixture(migrator, prisma, tag, { sessionIds, configIds: [`cfg-${tag}`] });
+    await migrator.end();
     await db.close();
   });
+  const created = await fixture(prisma, { tag });
 
   const now = Date.parse('2026-11-10T08:00:00.000Z');
   const { session, snapshotVersion, configResolution } = await createSession(prisma, created, 'tryout', new Date(now).toISOString());
   assert.match(snapshotVersion, /^s1-/);
   assert.equal(configResolution, 'resolved', 'no pin: order 2');
-  sessionId = session.id;
+  sessionIds.push(session.id);
   assert.equal(session.durationMs, 60_000, 'tryout duration is the config duration');
 
   const saved = await saveAnswer(prisma, session.id, { questionId: `q-${tag}-0`, selected: 'B', flagged: false, elapsedActiveMs: 1000 }, now + 1000, new Date(now + 1000).toISOString());
@@ -109,7 +153,9 @@ test('session: snapshot, tryout duration, autosave clock, submit verdict follows
   const scoredAt = new Date(now + 3000).toISOString();
   const result = await submitSession(prisma, session.id, null, now + 3000, scoredAt);
   assert.equal(result.total.earned, 5);
-  assert.deepEqual(result.timing, { activeMs: 3000, durationMs: 60_000 }, 'timing is computed once, at scoring');
+  // §8.1 rule 2: the autosave stored the active time and stopped the clock, so the 2 s between save and submit are not
+  // accumulated. `timing` is computed once, at scoring, from the frozen clock.
+  assert.deepEqual(result.timing, { activeMs: 1000, durationMs: 60_000 }, 'timing is computed once, at scoring');
   assert.equal(result.scoredAt, scoredAt);
   assert.equal(result.withheld, null, 'a verdict was authorized');
   assert.deepEqual(result.packageBinding.packageId, `pkg-${tag}`);
@@ -130,7 +176,7 @@ test('session: snapshot, tryout duration, autosave clock, submit verdict follows
   assert.equal(storedRow.result.scoredAt, scoredAt);
   await assert.rejects(
     prisma.$executeRaw`UPDATE "score_result" SET "totalJson" = '{}' WHERE "sessionId" = ${session.id}`,
-    (error) => error.code === '23001' || error.code === '42501',
+    (error) => error.code === 'P2010',
     'T-7 (or the missing grant) refuses a score-column rewrite',
   );
 
@@ -143,23 +189,20 @@ test('AUD-85: verdict-only re-score adds a withheld verdict through the function
   if (db === null) return t.skip(reason);
   const prisma = /** @type {any} */ (db.prisma);
   const tag = `d2v${Date.now()}`;
-  const created = await fixture(prisma, { tag });
-  /** @type {string} */
-  let sessionId = '';
+  const migrator = await migratorConnection();
+  /** @type {string[]} */
+  const sessionIds = [];
   t.after(async () => {
-    await prisma.$queryRaw`SELECT tryoutsim.delete_session(${sessionId})`.catch(() => undefined);
-    await prisma.provisionalApproval.deleteMany({ where: { configId: created.configId } }).catch(() => undefined);
-    await prisma.examConfig.delete({ where: { id: created.configId } }).catch(() => undefined);
-    await prisma.package.delete({ where: { id: `pkg-${tag}` } }).catch(() => undefined);
-    await prisma.question.deleteMany({ where: { id: { startsWith: `q-${tag}-` } } }).catch(() => undefined);
-    await prisma.competency.delete({ where: { id: `TWK.${tag}` } }).catch(() => undefined);
+    await cleanupFixture(migrator, prisma, tag, { sessionIds, configIds: [`cfg-${tag}`] });
+    await migrator.end();
     await db.close();
   });
+  const created = await fixture(prisma, { tag });
 
   const now = Date.parse('2026-11-10T09:00:00.000Z');
   const at = (offset) => new Date(now + offset).toISOString();
   const { session } = await createSession(prisma, created, 'tryout', at(0));
-  sessionId = session.id;
+  sessionIds.push(session.id);
   await saveAnswer(prisma, session.id, { questionId: `q-${tag}-0`, selected: 'B', flagged: false, elapsedActiveMs: 500 }, now + 500, at(500));
 
   const withheld = await submitSession(prisma, session.id, null, now + 1000, at(1000));
@@ -189,29 +232,36 @@ test('AUD-87: createSession resolves the version pin first, else the latest usab
   if (db === null) return t.skip(reason);
   const prisma = /** @type {any} */ (db.prisma);
   const tag = `d2p${Date.now()}`;
+  /** @type {string[]} */
+  const sessions = [];
+  const migrator = await migratorConnection();
+  // Registered before any write; the pin lives on an append-only table, so cleanup runs as the migrator.
+  t.after(async () => {
+    await cleanupFixture(migrator, prisma, tag, { sessionIds: sessions, configIds: [`cfg-${tag}`, `cfg-${tag}-pin`] });
+    await migrator.end();
+    await db.close();
+  });
   const created = await fixture(prisma, { tag });
   const pinnedId = `${created.configId}-pin`;
   const pinned = await prisma.examConfig.findUnique({ where: { id: created.configId } });
-  await prisma.examConfig.create({ data: { ...pinned, id: pinnedId, configVersion: 2, regulatoryBasisHash: `rh-${tag}-pin` } });
-  const sessions = [];
-  t.after(async () => {
-    for (const id of sessions) await prisma.$queryRaw`SELECT tryoutsim.delete_session(${id})`.catch(() => undefined);
-    await prisma.$executeRawUnsafe('UPDATE "package_version" SET "examConfigId" = NULL, "examConfigVersion" = NULL WHERE "packageId" = ?', `pkg-${tag}`).catch(() => undefined);
-    await prisma.examConfig.deleteMany({ where: { id: { in: [pinnedId, created.configId] } } }).catch(() => undefined);
-    await prisma.package.delete({ where: { id: `pkg-${tag}` } }).catch(() => undefined);
-    await prisma.question.deleteMany({ where: { id: { startsWith: `q-${tag}-` } } }).catch(() => undefined);
-    await prisma.competency.delete({ where: { id: `TWK.${tag}` } }).catch(() => undefined);
-    await db.close();
-  });
+  await prisma.examConfig.create({ data: { ...pinned, id: pinnedId, configVersion: configVersionFor(tag) + 1, regulatoryBasisHash: `rh-${tag}-pin` } });
+
 
   const pin = async (examConfigId, examConfigVersion) => {
-    await prisma.$executeRawUnsafe('UPDATE "package_version" SET "examConfigId" = ?, "examConfigVersion" = ? WHERE "packageId" = ?', examConfigId, examConfigVersion, `pkg-${tag}`);
-    const version = await prisma.packageVersion.findUnique({ where: { packageId_version: { packageId: `pkg-${tag}`, version: 1 } } });
-    return { pkg: created.pkg, version };
+    // `package_version` is immutable (T-9; PACKAGE_SPECIFICATION §5 "every save creates a new version"), so a pin is
+    // a new version row, never an UPDATE of the current one.
+    const current = await prisma.packageVersion.findFirst({ where: { packageId: `pkg-${tag}` }, orderBy: { version: 'desc' } });
+    const version = current.version + 1;
+    await prisma.packageVersion.create({ data: {
+      packageId: `pkg-${tag}`, version, titleId: current.titleId, createdAt: new Date().toISOString(),
+      definitionJson: current.definitionJson, examConfigId, examConfigVersion,
+    } });
+    const row = await prisma.packageVersion.findUnique({ where: { packageId_version: { packageId: `pkg-${tag}`, version } } });
+    return { pkg: created.pkg, version: row };
   };
 
   const at = new Date().toISOString();
-  const pinnedRun = await createSession(prisma, await pin(pinnedId, 2), 'tryout', at);
+  const pinnedRun = await createSession(prisma, await pin(pinnedId, configVersionFor(tag) + 1), 'tryout', at);
   sessions.push(pinnedRun.session.id);
   assert.equal(pinnedRun.configResolution, 'pinned');
   assert.equal(pinnedRun.session.examConfigId, pinnedId);
@@ -220,7 +270,8 @@ test('AUD-87: createSession resolves the version pin first, else the latest usab
   const fallbackRun = await createSession(prisma, stale, 'tryout', at);
   sessions.push(fallbackRun.session.id);
   assert.equal(fallbackRun.configResolution, 'fallback', 'the pin no longer matches a usable config');
-  assert.equal(fallbackRun.session.examConfigId, created.configId);
+  // Order 2 is the newest usable CPNS config, which is the pinned one (it is a valid config in its own right).
+  assert.equal(fallbackRun.session.examConfigId, pinnedId);
 
   const unpinned = await createSession(prisma, await pin(null, null), 'tryout', at);
   sessions.push(unpinned.session.id);

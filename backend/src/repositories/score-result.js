@@ -75,12 +75,16 @@ export async function loadScoreResult(prisma, sessionId) {
   // `packageBinding` is frozen on the snapshot at creation and read back with the result; never recomputed (AUD-88).
   const row = await prisma.scoreResult.findUnique({
     where: { sessionId },
-    include: { session: { select: { snapshot: { select: { packageBindingJson: true } } } } },
+    include: { session: { select: { snapshot: { select: { packageBindingJson: true, configJson: true } } } } },
   });
   if (!row) return null;
+  // `configId`/`configVersion`/`scoringVersion` belong to the `ScoreResult` wire shape (§5) but are not stored on
+  // `score_result`: they are the snapshot's own frozen values, the only source that can never drift.
+  const frozen = row.session?.snapshot?.configJson == null ? null : JSON.parse(row.session.snapshot.configJson);
   return {
     result: {
       sessionId: row.sessionId,
+      ...(frozen === null ? {} : { configId: frozen.configId, configVersion: frozen.configVersion, scoringVersion: frozen.scoringVersion }),
       snapshotVersion: row.snapshotVersion,
       total: JSON.parse(row.totalJson),
       byTest: JSON.parse(row.byTestJson),

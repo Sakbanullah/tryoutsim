@@ -165,7 +165,9 @@ test('POST /exam-configs/:id/approval: 400 on ack/path mismatch, 409 on non-prov
 
     const first = await call(base, 'POST', '/exam-configs/cpns-2026/approval', { configId: 'cpns-2026', acknowledgedWarnings: ['UNV-02', 'UNV-01'] });
     assert.equal(first.status, 200);
-    assert.deepEqual(first.envelope.data.approval, {
+    // The wire `ProvisionalApproval` (CPNS_2026_REGULATIONS §4.3) carries no storage id.
+    const { id: _approvalId, ...approvalWire } = first.envelope.data.approval;
+    assert.deepEqual(approvalWire, {
       configId: 'cpns-2026', configVersion: 3, scoringVersion: 1, regulatoryBasisHash: 'hash-3',
       approvedByUserAt: NOW, approvedBy: 'local-user', acknowledgedWarnings: ['UNV-02', 'UNV-01'],
     });

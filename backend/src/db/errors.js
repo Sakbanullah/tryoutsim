@@ -21,6 +21,27 @@ function pgCode(error) {
 }
 
 /**
+ * Prisma's own error codes that stand for a PostgreSQL rule the client maps away from the raw SQLSTATE. Prisma wraps
+ * a foreign-key violation raised by a trigger (our `*_guard` functions use `ERRCODE = '23503'`) as `P2003` with no
+ * `meta.field_name`, which is why it is matched by code and not by column.
+ * @type {Record<string, string>}
+ */
+const PRISMA_CODES = Object.freeze({
+  P2003: '23503',
+  P2002: '23505',
+});
+
+/** The SQLSTATE a thrown error stands for: the raw one, or the one a Prisma code maps to. */
+function ruleCode(error) {
+  const prismaCode = pgCode(error);
+  if (typeof prismaCode === 'string' && prismaCode in PRISMA_CODES) {
+    return PRISMA_CODES[prismaCode];
+  }
+  const meta = /** @type {{meta?: {code?: string}}} */ (error)?.meta;
+  return typeof meta?.code === 'string' ? meta.code : prismaCode;
+}
+
+/**
  * Map a database error to an `AppError` when it is a known rule, rethrow otherwise.
  *
  * @param {unknown} error
@@ -28,7 +49,7 @@ function pgCode(error) {
  * @returns {never}
  */
 export function translateDbError(error, context) {
-  switch (pgCode(error)) {
+  switch (ruleCode(error)) {
     case '23001':
       throw conflict(context.resource, 'immutable', 'That record is history and cannot be changed.');
     case '23505':

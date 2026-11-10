@@ -73,9 +73,15 @@ test('generation: batches, partial output and the report', { skip: !process.env.
   const prisma = /** @type {any} */ (db.prisma);
   const secretStore = createMemorySecretStore();
   const store = createProviderStore({ prisma, secretStore, installId, logger: silent });
-  // The route's leaf check is not exercised here; any existing leaf grounds the prompt.
-  const leaf = await prisma.competency.findFirst({ where: { children: { none: {} } } });
-  if (leaf === null) return t.skip('no competency leaf is seeded');
+  // The route's leaf check is not exercised here; a leaf created by this test grounds the prompt. There is no seed
+  // script, so every fixture supplies its own rows.
+  const tag = `d4g${Date.now()}`;
+  const leafId = `TWK.${tag}`;
+  await prisma.competency.create({ data: { id: leafId, test: 'TWK', label: 'latihan', goal: 'latihan', tier: 'EVIDENCE-BACKED-NOT-CPNS-2026', parentId: null } });
+  const leaf = await prisma.competency.findFirst({ where: { id: leafId } });
+  t.after(async () => {
+    await prisma.competency.deleteMany({ where: { id: leafId } }).catch(() => undefined);
+  });
 
   const provider = await store.create({
     preset: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'm',
@@ -87,8 +93,16 @@ test('generation: batches, partial output and the report', { skip: !process.env.
     await store.remove(provider.id).catch(() => undefined);
     await db.close();
   });
-  // Mark the pair tested without a network call: the runner only reads `testedAt`.
-  await prisma.provider.update({ where: { id: provider.id }, data: { testedAt: '2026-11-10T00:00:00.000Z' } });
+  // Mark the pair tested without a network call: the runner only reads `testedAt`. A manual `maxContext` of 2500 is
+  // below 5 × 2000, so `planBatches` halves the 5-question batch to 2 — this fixture needs two batches, one that
+  // succeeds and one that fails, to exercise partial output (GENERATION_JOBS §3).
+  await prisma.provider.update({
+    where: { id: provider.id },
+    data: {
+      testedAt: '2026-11-10T00:00:00.000Z',
+      capabilityFlagsJson: JSON.stringify({ maxContext: { value: 2500, source: 'manual' } }),
+    },
+  });
   await saveRouting(prisma, { default: { providerId: provider.id, modelId: 'm' }, perTask: {} });
 
   /** @type {{tx: any, input: any}[]} */
