@@ -26,6 +26,7 @@ import { registerTaxonomyRoutes } from './taxonomy.js';
 import { registerGenerationRoutes } from './generation.js';
 import { registerProviderRoutes } from './providers.js';
 import { registerNotificationRoutes } from './notifications.js';
+import { registerBootstrapRoutes } from './bootstrap.js';
 
 /**
  * Build the router with every domain mounted.
@@ -43,6 +44,7 @@ export function buildRouter(deps) {
   const clock = deps.nowIso ?? (() => new Date().toISOString());
 
   registerHealthRoutes(router, pool);
+  registerBootstrapRoutes(router, { pool, prisma, providerStore: deps.providerStore });
   registerTaxonomyRoutes(router, { pool });
   registerExamConfigRoutes(router, { prisma, nowIso: clock });
   registerPackageRoutes(router, { prisma, now, nowIso: clock });

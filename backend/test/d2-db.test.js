@@ -16,7 +16,7 @@ import { loadConfig } from '../src/config.js';
 import { approveConfig } from '../src/repositories/exam-config.js';
 import { AppError } from '../src/errors.js';
 import { loadScoreResult } from '../src/repositories/score-result.js';
-import { createSession, deleteSession, loadResult, rescoreSession, saveAnswer, submitSession } from '../src/repositories/session.js';
+import { createSession, deleteSession, loadResult, loadRunner, rescoreSession, saveAnswer, submitSession } from '../src/repositories/session.js';
 
 const SKIP = !process.env.DATABASE_URL_APP && 'DATABASE_URL_APP is not set';
 
@@ -276,4 +276,32 @@ test('AUD-87: createSession resolves the version pin first, else the latest usab
   const unpinned = await createSession(prisma, await pin(null, null), 'tryout', at);
   sessions.push(unpinned.session.id);
   assert.equal(unpinned.configResolution, 'resolved');
+});
+
+test('runner payload carries the frozen question content the screen renders (B2)', { skip: SKIP }, async (t) => {
+  const { db, reason } = await database();
+  if (db === null) return t.skip(reason);
+  const prisma = /** @type {any} */ (db.prisma);
+  const tag = `d2r${Date.now()}`;
+  const migrator = await migratorConnection();
+  /** @type {string[]} */
+  const sessions = [];
+  t.after(async () => {
+    await cleanupFixture(migrator, prisma, tag, { sessionIds: sessions, configIds: [`cfg-${tag}`] });
+    await migrator.end();
+    await db.close();
+  });
+  const created = await fixture(prisma, { tag });
+  const { session } = await createSession(prisma, created, 'tryout', new Date().toISOString());
+  sessions.push(session.id);
+
+  const runner = await loadRunner(prisma, session.id, Date.now());
+  const [first] = runner.questions;
+  assert.equal(runner.questions.length, 3);
+  assert.equal(first.stem, 's0', 'the runner renders the frozen stem');
+  assert.equal(first.difficulty, 'easy', 'difficulty is the frozen author-assigned value');
+  assert.equal(first.provenanceKind, 'human', 'provenance comes from the question that was frozen');
+  assert.deepEqual(first.options.map((o) => o.key), ['A', 'B', 'C', 'D', 'E']);
+  assert.equal(first.selected, null);
+  assert.equal(typeof runner.durationMs, 'number', 'the clock is part of the payload');
 });

@@ -52,7 +52,8 @@ async function eligibleQuestions(prisma, definition) {
   const competencies = definition.competencyIds ?? null;
   return prisma.$queryRaw`
     SELECT q."id" AS "questionId", q."test", q."competencyId", q."optionsJson", q."answerKeyJson",
-           q."contentVersion" AS "version", q."contentHash"
+           q."contentVersion" AS "version", q."contentHash", q."stem", q."difficultyAiInitial",
+           q."provenanceJson"
     FROM "question" q
     WHERE q."lifecycle" = 'active' AND q."dynamicEligible" = 1
       AND q."test" = ANY(${tests}::text[])
@@ -156,6 +157,10 @@ function buildSnapshot({ roster, config, basisRefs, thresholdsRow, approvalRows,
       competencyId: q.competencyId,
       optionKeys: options.map((o) => o.key),
       options,
+      // The runner renders what was frozen with the session, never the live bank (§7).
+      stem: q.stem,
+      difficulty: q.difficultyAiInitial,
+      provenanceKind: parseJson(q.provenanceJson)?.kind ?? null,
       maxScore: key?.maxScore ?? null,
     };
   });
@@ -402,6 +407,9 @@ export async function loadRunner(prisma, sessionId, nowMs) {
         test: q.test,
         competencyId: q.competencyId,
         options: q.options ?? [],
+        stem: q.stem,
+        difficulty: q.difficulty,
+        provenanceKind: q.provenanceKind,
         selected: saved?.selectedOption ?? null,
         flagged: saved ? saved.flagged === 1 : false,
         elapsedActiveMs: saved?.elapsedActiveMs ?? 0,
