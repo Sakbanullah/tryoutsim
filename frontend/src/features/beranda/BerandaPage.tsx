@@ -115,13 +115,10 @@ function okData(state: Load<AnalyticsSnapshot>): AnalyticsSnapshot | null {
  * start is blocked — the exact reason instead of a disabled button with no explanation.
  */
 function StartPanel({ boot }: { boot: BootstrapResponse }) {
-  // A provisional config is startable without approval; only the threshold verdict is withheld.
-  const startable = boot.examConfigs.filter(
-    (c) => c.pathway === 'CPNS' && (c.state === 'historical' || c.state === 'provisional'),
-  )
-  const bankEmpty = boot.questionBankSummary.active === 0
-  const ready = startable.length > 0 && !bankEmpty
-  const first = startable[0]
+  // Bootstrap carries no config list (decision B3): the start is gated by the bank's own active stock.
+  const ready = boot.questionBankSummary.active > 0
+  const bankEmpty = !ready
+  // No config in the payload (B3), so the year and version chips have no value to show — the bank count stands alone.
 
   return (
     <Panel tone="wash" className="relative overflow-hidden p-6 lg:p-8">
@@ -137,10 +134,8 @@ function StartPanel({ boot }: { boot: BootstrapResponse }) {
             : 'Kumpulan soal belum memiliki soal yang bisa dipakai. Tambahkan soal dengan AI atau tulis sendiri.'}
         </p>
 
-        {ready && first ? (
+        {ready ? (
           <div className="mt-5 flex flex-wrap gap-2">
-            <ConfigChip label="Tahun" value={String(first.examYear)} />
-            <ConfigChip label="Versi" value={`v${first.configVersion}`} />
             <ConfigChip label="Soal aktif" value={String(boot.questionBankSummary.active)} />
           </div>
         ) : null}

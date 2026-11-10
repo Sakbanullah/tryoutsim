@@ -33,6 +33,9 @@ export function OutcomeView<T>({
       return <ErrorState message="Halaman ini tidak ditemukan. Mungkin datanya sudah dihapus." retry={retry} />
     case 'unavailable':
       return <ErrorState message="Gagal memuat. Periksa apakah aplikasi berjalan, lalu coba lagi." retry={retry} />
+    case 'notImplemented':
+      // The backend does not serve this route yet: no retry is offered because none could succeed.
+      return <ErrorState message="Fitur ini belum tersedia di versi backend saat ini." />
     case 'contract':
       return (
         <ErrorState
