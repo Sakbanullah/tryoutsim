@@ -116,7 +116,7 @@ export function registerProviderRoutes(router, { prisma, providerStore, fetchImp
     }
     const transport = await transportFor({ row, readKey: providerStore.readKey, fetchImpl });
     const result = await guarded(params.id, () => transport.test(modelId));
-    if (!result.ok) return { data: { ok: false, latencyMs: result.latencyMs, reason: result.reason } };
+    if (!result.ok) return { data: { ok: false, latencyMs: result.latencyMs, reason: result.reason, code: result.code } };
     await providerStore.recordTest(params.id, result);
     return { data: { ok: true, latencyMs: result.latencyMs, detected: result.detected } };
   });

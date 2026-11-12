@@ -194,3 +194,28 @@ test('status mapping and Retry-After parsing are pure', () => {
   assert.equal(mapHttpStatus(500, new Headers()).code, 'PROVIDER_UNAVAILABLE');
   assert.equal(retryAfterMs(new Headers({ 'retry-after': 'not-a-date' })), null);
 });
+
+test('a failed test carries the registry code so the UI can say why (BUG-007)', async () => {
+  // 401: the key is rejected — distinguishable from a timeout or an unreachable host.
+  const auth = client(() => json(401, { error: 'bad key' })).transport.test('m');
+  const authResult = await auth;
+  assert.equal(authResult.ok, false);
+  assert.equal(authResult.code, 'PROVIDER_AUTH_FAILED');
+  assert.equal(typeof authResult.latencyMs, 'number');
+  assert.ok(!JSON.stringify(authResult).includes(KEY), 'the result carries no key');
+
+  // A timeout keeps its own code rather than collapsing into "unavailable".
+  const timeout = await client(() => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  }).transport.test('m');
+  assert.equal(timeout.ok, false);
+  assert.equal(timeout.code, 'PROVIDER_TIMEOUT');
+
+  // A refused connection is unavailable with the scrubbed reason.
+  const refused = await client(() => {
+    throw new TypeError('fetch failed');
+  }).transport.test('m');
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(typeof refused.reason, 'string');
+});

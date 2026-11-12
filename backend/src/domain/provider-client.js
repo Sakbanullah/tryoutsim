@@ -252,7 +252,7 @@ export function createProviderClient({
      * then the capability probe. Throws `keyMissingFailure` for a provider that
      * needs a key and has none — that is a refusal, not a test result.
      * @param {string} modelId
-     * @returns {Promise<{ok: true, latencyMs: number, detected: {jsonMode: boolean | null, streaming: null, maxContext: null}} | {ok: false, latencyMs: number, reason: string}>}
+     * @returns {Promise<{ok: true, latencyMs: number, detected: {jsonMode: boolean | null, streaming: null, maxContext: null}} | {ok: false, latencyMs: number, reason: string, code: string}>}
      */
     async test(modelId) {
       if ((await getKey()) === null) throw keyMissingFailure(providerId);

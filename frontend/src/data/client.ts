@@ -32,6 +32,7 @@ import type {
   TrendSeries,
 } from '../types/contracts'
 import type { Result } from './errors'
+import type { ProviderTestResult } from '../types/contracts'
 
 /**
  * The one seam between screens and data (FRONTEND_MOCK_DATA_STRATEGY §1).
@@ -122,7 +123,8 @@ export type ApiClient = {
   }): Promise<Result<ProviderView>>
   updateProvider(id: string, body: { baseUrl: string; timeoutMs: number }): Promise<Result<ProviderView>>
   deleteProvider(id: string): Promise<Result<null>>
-  testProvider(id: string, modelId?: string): Promise<Result<{ ok: boolean; latencyMs: number }>>
+  /** `POST /providers/:id/test` — a failed test is a 200 with `ok: false` and the registry code of the failure. */
+  testProvider(id: string, modelId?: string): Promise<Result<ProviderTestResult>>
   saveCapabilities(id: string, body: ModelCapabilities): Promise<Result<ProviderView>>
   refreshModels(id: string): Promise<Result<string[]>>
   routing(): Promise<Result<AiRouting>>

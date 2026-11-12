@@ -8,6 +8,7 @@ import { Badge, Button, Dialog, Field, Notice, Panel, Skeleton, controlClass } f
 import { Block, PageHeader } from '../../ui/page'
 import { BackLink } from '../../shell/Layout'
 import { IconAlert, IconCheck, IconPlug, IconRefresh, IconSparkle } from '../../ui/icons'
+import { providerTestText } from './providerTestText'
 
 /**
  * Pengaturan AI (`/lainnya/ai`) — PAGE_SPECIFICATIONS §15.
@@ -94,7 +95,7 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
   /** Test the stored configuration. The key and the model come from the row, never from this form. */
   async function runTest() {
     const res = await action.run(() => api.testProvider(provider.id))
-    if (res) setTest({ ok: res.ok, text: res.ok ? `Terhubung (${res.latencyMs} ms). Kemampuan model diperiksa.` : 'Penyedia menjawab, tetapi menolak permintaan percobaan.' })
+    if (res) setTest(providerTestText(res))
   }
 
   /** Save the edited endpoint settings; a key is never part of this patch. */

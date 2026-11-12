@@ -8,6 +8,7 @@ import type {
   Material,
   Notification,
   Package,
+  ProviderTestResult,
   ProviderView,
   Question,
   QuestionBatch,
@@ -488,7 +489,7 @@ function buildClient(): ApiClient {
     },
     async testProvider(id, modelId) {
       // The model id defaults to the provider's `defaultModel`; a failed test is a 200 with `ok: false`.
-      return request<{ ok: boolean; latencyMs: number }>('POST', `/providers/${encodeURIComponent(id)}/test`, modelId ? { modelId } : {})
+      return request<ProviderTestResult>('POST', `/providers/${encodeURIComponent(id)}/test`, modelId ? { modelId } : {})
     },
     async saveCapabilities(id, body) {
       return request<ProviderView>('PUT', `/providers/${encodeURIComponent(id)}/capabilities`, body)

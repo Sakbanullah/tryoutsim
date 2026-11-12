@@ -416,6 +416,14 @@ export type ProviderView = Provider & {
   models?: string[]
 }
 
+/**
+ * `POST /providers/:id/test` (API_SPECIFICATION §7 x / PROVIDER_INTEGRATION §5). A failed test is a 200 with
+ * `ok: false`; `code` is the registry code so the card can say why it failed (unknown to this client → generic).
+ */
+export type ProviderTestResult =
+  | { ok: true; latencyMs: number; detected?: unknown }
+  | { ok: false; latencyMs: number; reason?: string; code?: string }
+
 /** GAP-M8 — task→model map. */
 export type TaskId = 'question' | 'explanation' | 'material' | 'analysis'
 export type TaskMapEntry = { task: TaskId; providerId: string | null; modelId: string | null }

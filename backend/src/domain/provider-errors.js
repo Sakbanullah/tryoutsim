@@ -61,11 +61,31 @@ export function failureCategoryForError(error) {
 
 /**
  * A failed connection test as a value, not a throw (PROVIDER_INTEGRATION §5).
- * The reason is the failure's scrubbed message; the key never reached it.
+ * The reason is the failure's scrubbed message; the key never reached it. `code` is the registry code
+ * (API_SPECIFICATION §4) so the UI can say *why* the test failed rather than one generic sentence; it carries no
+ * key, header or body.
  * @param {unknown} error
- * @returns {{ok: false, reason: string}}
+ * @returns {{ok: false, reason: string, code: string}}
  */
 export function failedTest(error) {
-  if (error instanceof ProviderFailure) return { ok: false, reason: error.message };
-  return { ok: false, reason: 'The provider test could not be completed.' };
+  if (error instanceof ProviderFailure) return { ok: false, reason: error.message, code: error.code };
+  return {
+    ok: false,
+    reason: 'The provider test could not be completed.',
+    code: genericFailureCode(error),
+  };
 }
+
+/**
+ * The registry code of a failure that is not a `ProviderFailure`: a provider throwing one of the registry codes
+ * itself keeps it, anything else is `PROVIDER_UNAVAILABLE` with the scrubbed message.
+ * @param {unknown} error
+ * @returns {string}
+ */
+function genericFailureCode(error) {
+  const code = /** @type {{code?: unknown}} */ (error)?.code;
+  return typeof code === 'string' && PROVIDER_CODES.has(code) ? code : 'PROVIDER_UNAVAILABLE';
+}
+
+/** The provider codes the test result may carry (API_SPECIFICATION §4, ERROR_HANDLING). */
+const PROVIDER_CODES = new Set(['PROVIDER_AUTH_FAILED', 'RATE_LIMITED', 'PROVIDER_TIMEOUT', 'PROVIDER_UNAVAILABLE']);
