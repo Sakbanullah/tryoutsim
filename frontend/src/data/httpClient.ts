@@ -315,6 +315,13 @@ function buildClient(): ApiClient {
         elapsedActiveMs,
       })
     },
+    async wakeSession(id) {
+      const res = await request<{ activeMs: number; runningSince: string | null; expired: boolean }>(
+        'POST',
+        `/sessions/${encodeURIComponent(id)}/resume`,
+      )
+      return res.ok ? ok({ activeMs: res.data.activeMs, runningSince: res.data.runningSince, expired: res.data.expired === true }) : res
+    },
     async submitSession(id, body) {
       const res = await request<Wire>('POST', `/sessions/${encodeURIComponent(id)}/submit`, body.answers.length > 0 ? body : undefined)
       return res.ok ? ok(toScoreResult(res.data)) : res

@@ -65,6 +65,8 @@ export type ApiClient = {
   session(id: string): Promise<Result<SessionDetail>>
   /** `elapsedActiveMs` is the answer's cumulative active time (API_SPECIFICATION §7.5); omit it while no clock is wired. */
   saveAnswers(id: string, body: AnswersPatch, elapsedActiveMs?: number): Promise<Result<{ savedAt: string }>>
+  /** `POST /sessions/:id/resume` (E17) — rule 3: a save pauses the session, opening it resumes it. */
+  wakeSession(id: string): Promise<Result<{ activeMs: number; runningSince: string | null; expired: boolean }>>
   submitSession(id: string, body: AnswersPatch): Promise<Result<ScoreResult>>
   rescoreSession(id: string): Promise<Result<ScoreResult>>
   sessionResult(id: string): Promise<Result<ScoreResult>>

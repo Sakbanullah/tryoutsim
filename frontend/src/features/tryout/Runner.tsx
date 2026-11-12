@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../data'
 import type { SessionDetail, SessionQuestion } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
+import { clockDisplay } from './sessionClock'
 import { useApi } from '../shared/useApi'
 import { useShell } from '../../state/shell'
 import { Badge, Button, Notice, Panel, cx } from '../../ui/ui'
@@ -51,39 +52,21 @@ export default function Runner({ mode }: { mode: 'tryout' | 'practice' }) {
   )
 }
 
+/** Server clock state plus the last successful resume; `SessionClock` advances from these only (sessionClock.ts). */
+type Wake = { activeMs: number; runningSince: string | null; at: number }
+
 /**
- * The clock, rendered from the server's state only (FRONTEND_EXAM_FLOW §6). Between polls the display advances
- * locally by the time elapsed since the payload arrived, so a minute does not freeze; the server stays the owner
- * of `activeMs` and of expiry, and any reload corrects the display.
- * @param {{detail: SessionDetail}} props
+ * The clock, rendered from the server's state only (FRONTEND_EXAM_FLOW §6, SCORING_METHODOLOGY §8.1 rules 2–3).
+ * A save pauses the session, so the runner resumes it on mount and after each save; the display advances locally
+ * from that resume, and any reload corrects it from the server.
  */
-function SessionClock({ detail }: { detail: SessionDetail }) {
+function SessionClock({ detail, wake }: { detail: SessionDetail; wake: Wake | null }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
-
-  const running = detail.runningSince !== null
-  const sincePayload = running ? Math.max(0, now - Date.parse(detail.runningSince as string)) : 0
-  const activeMs = detail.activeMs + sincePayload
-  const pausedNote = running ? '' : ' · dijeda'
-
-  if (detail.durationMs === null) {
-    return <>Waktu aktif {clockText(activeMs)} · tanpa batas waktu{pausedNote}</>
-  }
-  const remaining = Math.max(0, detail.durationMs - activeMs)
-  return <>Sisa waktu {clockText(remaining)}{pausedNote}</>
-}
-
-/** `mm:ss` for a duration under an hour, `h:mm:ss` otherwise. */
-function clockText(ms: number): string {
-  const total = Math.floor(ms / 1000)
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
+  return <>{clockDisplay(detail, wake, now).text}</>
 }
 
 export const resultPath = (mode: 'tryout' | 'practice', sessionId: string) =>
@@ -125,6 +108,20 @@ function RunnerBody({ detail, mode }: { detail: SessionDetail; mode: 'tryout' | 
   const [flags, setFlags] = useState<Set<string>>(new Set())
   const [unsaved, setUnsaved] = useState<Set<string>>(new Set())
   const [leaving, setLeaving] = useState(false)
+  const [wake, setWake] = useState<Wake | null>(null)
+
+  /**
+   * Resumes an `open` session (rule 3) and records the answer with the instant it arrived, so the clock advances
+   * from the server's `activeMs`. A failed resume is ignored: the clock then shows the server's paused state, and
+   * nothing about the exam depends on it.
+   */
+  const wakeSession = useCallback(async () => {
+    const res = await api.wakeSession(detail.sessionId)
+    if (res.ok) setWake({ activeMs: res.data.activeMs, runningSince: res.data.runningSince, at: Date.now() })
+  }, [detail.sessionId])
+  useEffect(() => {
+    void wakeSession()
+  }, [wakeSession])
 
   const questions = detail.questions
   const current = questions[index]
@@ -157,13 +154,14 @@ function RunnerBody({ detail, mode }: { detail: SessionDetail; mode: 'tryout' | 
           return next
         })
         reportAutosave('saved')
+        void wakeSession() // the save just paused the session; resume it again
       } else {
         failed.current.set(questionId, selected)
         setUnsaved((prev) => new Set(prev).add(questionId))
         reportAutosave('failed', () => void flush())
       }
     },
-    [detail.sessionId, reportAutosave, flush],
+    [detail.sessionId, reportAutosave, flush, wakeSession],
   )
   saveRef.current = save
 
@@ -454,7 +452,7 @@ function RunnerBody({ detail, mode }: { detail: SessionDetail; mode: 'tryout' | 
             </ul>
 
             <p className="mt-4 text-sm leading-relaxed text-muted">
-              <SessionClock detail={detail} />
+              <SessionClock detail={detail} wake={wake} />
             </p>
           </Panel>
         </aside>

@@ -471,7 +471,21 @@ export const mockClient: ApiClient = {
     if (!session) return fail(notFound('sesi'))
     if (session.detail.status !== 'open') return fail(conflict('not_open'))
     for (const a of patchToAnswers(body)) session.answers.set(a.questionId, a.selected)
+    // Rule 2: an answer save pauses the clock; `wakeSession` resumes it.
+    session.detail = { ...session.detail, runningSince: null }
     return ok({ savedAt: new Date().toISOString() })
+  },
+
+  async wakeSession(id) {
+    await wait()
+    const session = sessions.get(id)
+    if (!session) return fail(notFound('sesi'))
+    if (session.detail.status !== 'open') return fail(conflict('not_open'))
+    const { activeMs, expired } = session.detail
+    // Rule 3: resume from the stored `activeMs`. A seeded open session has no store; it resumes as-is.
+    const resumed = expired ? { activeMs, runningSince: null as string | null } : { activeMs, runningSince: new Date().toISOString() }
+    session.detail = { ...session.detail, ...resumed }
+    return ok({ ...resumed, expired })
   },
 
   async submitSession(id, body) {
