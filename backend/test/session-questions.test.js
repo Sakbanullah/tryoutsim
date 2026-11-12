@@ -34,7 +34,7 @@ test('keyedOption: only a unique top scorer on TWK/TIU', () => {
 
 test('block: frozen content, latest explanation, stored score echoed', () => {
   const read = () => ({
-    frozen: { test: 'TIU', stem: 's', options: [{ key: 'A', text: 'a' }], contentVersion: 2 },
+    frozen: { test: 'TIU', stem: 's', options: [{ key: 'A', text: 'a' }], questionVersion: 2 },
     frozenKey: { optionScores: { A: 5, B: 0 } },
     scored: { earned: 0, maxScore: 5, selected: 'B', correct: false },
     latest: { contentVersion: 3, explanation: 'e', answerKeyJson: '{"optionScores":{}}', lifecycle: 'live' },
@@ -52,7 +52,7 @@ test('block: frozen content, latest explanation, stored score echoed', () => {
 
 test('block: a missing current question still renders frozen content with no explanation', () => {
   const read = () => ({
-    frozen: { test: 'TWK', stem: 's', options: [], contentVersion: 1 },
+    frozen: { test: 'TWK', stem: 's', options: [], questionVersion: 1 },
     frozenKey: { optionScores: { A: 5 }, optionJustifications: { A: 'why' } },
     scored: { earned: 5, maxScore: 5, selected: 'A', correct: true },
     latest: null,
@@ -63,6 +63,48 @@ test('block: a missing current question still renders frozen content with no exp
   assert.equal(block.explanation, null);
   assert.equal(block.explanationSource, 'none');
   assert.equal(block.justificationsSource, 'frozen');
+  assert.equal(block.frozenContentVersion, 1, 'BUG-011: read from `questionVersion`');
+});
+
+/** A snapshot entry in the shape `session.js` `buildSnapshot` writes. */
+const snapshotEntry = (questionVersion) => ({
+  questionId: 'q1', questionVersion, contentHash: 'h', test: 'TIU',
+  optionKeys: ['A', 'B'], options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }],
+  stem: 's', difficulty: 'easy', provenanceKind: 'human', maxScore: 5,
+});
+
+/** `loadReview`'s read callback for one snapshot entry and one current `question` row. */
+const reader = (frozen, latest) => () => ({
+  frozen,
+  frozenKey: { optionScores: { A: 5, B: 0 } },
+  scored: { earned: 0, maxScore: 5, selected: 'B', correct: false },
+  latest,
+});
+
+test('BUG-011: equal frozen and latest versions expose the same number (explanation may render)', () => {
+  const latest = { contentVersion: 2, explanation: 'e', answerKeyJson: '{"optionScores":{}}', lifecycle: 'live' };
+  const [block] = buildReviewResponse('s1', ['q1'], reader(snapshotEntry(2), latest)).questions;
+  assert.equal(block.frozenContentVersion, 2);
+  assert.equal(block.latestContentVersion, 2);
+  assert.equal(block.frozenContentVersion, block.latestContentVersion);
+});
+
+test('BUG-011: edited question reports two different versions (explanation is hidden)', () => {
+  const latest = { contentVersion: 3, explanation: 'e', answerKeyJson: '{"optionScores":{}}', lifecycle: 'live' };
+  const [block] = buildReviewResponse('s1', ['q1'], reader(snapshotEntry(2), latest)).questions;
+  assert.equal(block.frozenContentVersion, 2);
+  assert.equal(block.latestContentVersion, 3);
+  assert.notEqual(block.frozenContentVersion, block.latestContentVersion);
+});
+
+test('BUG-011: an entry with no version yields null, never a crash or a match', () => {
+  const latest = { contentVersion: 2, explanation: 'e', answerKeyJson: '{"optionScores":{}}', lifecycle: 'live' };
+  const { questionVersion, ...withoutVersion } = snapshotEntry(2);
+  void questionVersion;
+  const [block] = buildReviewResponse('s1', ['q1'], reader(withoutVersion, latest)).questions;
+  assert.equal(block.frozenContentVersion, null, 'absent field is null, so strict matching cannot pass');
+  assert.notEqual(block.frozenContentVersion, block.latestContentVersion);
+  assert.deepEqual(block.options, [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }], 'frozen content still renders');
 });
 
 test('open session is refused with session_open, both modes', () => {

@@ -69,7 +69,7 @@ export function keyedOption(key, test, maxScore) {
  *
  * @param {object} input
  * @param {string} input.questionId
- * @param {object} input.frozen `session_snapshot.questionsJson` entry
+ * @param {object} input.frozen `session_snapshot.questionsJson` entry (`questionVersion` is the frozen content version)
  * @param {object} input.frozenKey `session_snapshot.answerKeysJson` entry
  * @param {{earned: number, maxScore: number, selected: string | null, correct: boolean | null}} input.scored
  *   the stored `ScoreResult.byQuestion` row for this id
@@ -97,7 +97,9 @@ export function buildReviewBlock({ questionId, frozen, frozenKey, scored, latest
     maxScore,
     selected: scored.selected,
     correct: scored.correct,
-    frozenContentVersion: frozen.contentVersion,
+    // BUG-011: the snapshot entry names the frozen version `questionVersion` (session.js `buildSnapshot`).
+    // `null` (not a dropped key) when an older snapshot lacks it, so strict matching never passes by accident.
+    frozenContentVersion: frozen.questionVersion ?? null,
     latestContentVersion: latest?.contentVersion ?? null,
     explanation: latest?.explanation ?? null,
     explanationSource: latest?.explanation ? 'latest' : 'none',
