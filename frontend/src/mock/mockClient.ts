@@ -964,6 +964,8 @@ export const mockClient: ApiClient = {
     await wait()
     const provider = PROVIDERS.find((p) => p.id === id)
     if (!provider) return fail(notFound('penyedia'))
+    // Same rule as the route's store: editing baseUrl, key or model resets the recorded test (PROVIDER_ARCHITECTURE §5).
+    if (body.baseUrl !== undefined || body.defaultModel !== undefined) provider.testedAt = null
     Object.assign(provider, body)
     return ok({ ...provider })
   },

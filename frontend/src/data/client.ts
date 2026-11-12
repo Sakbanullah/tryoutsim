@@ -121,7 +121,7 @@ export type ApiClient = {
     timeoutMs: number
     retries: number
   }): Promise<Result<ProviderView>>
-  updateProvider(id: string, body: { baseUrl: string; timeoutMs: number }): Promise<Result<ProviderView>>
+  updateProvider(id: string, body: { baseUrl?: string; timeoutMs?: number; defaultModel?: string }): Promise<Result<ProviderView>>
   deleteProvider(id: string): Promise<Result<null>>
   /** `POST /providers/:id/test` — a failed test is a 200 with `ok: false` and the registry code of the failure. */
   testProvider(id: string, modelId?: string): Promise<Result<ProviderTestResult>>

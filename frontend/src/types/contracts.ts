@@ -295,6 +295,8 @@ export type Provider = {
   retries: number
   extraParams: Record<string, unknown>
   createdAt: string
+  /** When the provider+model pair last passed a connection test; `null` until tested (AI_PROVIDER_ARCHITECTURE §5). */
+  testedAt?: string | null
 }
 
 /** Taxonomy node — COMPETENCY_TAXONOMY §2–§5. */

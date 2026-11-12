@@ -86,11 +86,15 @@ function IconPlugin() {
 /* ── One provider ─────────────────────────────────────────────────────────────────────── */
 
 function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
-  const [config, setConfig] = useState({ baseUrl: provider.baseUrl, timeoutMs: provider.timeoutMs })
+  const [config, setConfig] = useState({ baseUrl: provider.baseUrl, timeoutMs: provider.timeoutMs, defaultModel: provider.defaultModel ?? '' })
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
   const action = useAction()
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const dirty = config.baseUrl !== provider.baseUrl || config.timeoutMs !== provider.timeoutMs
+  const dirty =
+    config.baseUrl !== provider.baseUrl || config.timeoutMs !== provider.timeoutMs || config.defaultModel !== (provider.defaultModel ?? '')
+  /** What goes to PATCH: the model only when it is typed, so an empty field is never written as a model. */
+  const patch: { baseUrl: string; timeoutMs: number; defaultModel?: string } = { baseUrl: config.baseUrl, timeoutMs: config.timeoutMs }
+  if (config.defaultModel.trim() !== '') patch.defaultModel = config.defaultModel.trim()
 
   /** Test the stored configuration. The key and the model come from the row, never from this form. */
   async function runTest() {
@@ -100,7 +104,7 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
 
   /** Save the edited endpoint settings; a key is never part of this patch. */
   async function saveConfig() {
-    const done = await action.run(() => api.updateProvider(provider.id, config))
+    const done = await action.run(() => api.updateProvider(provider.id, patch))
     if (done) {
       setTest(null)
       onChanged()
@@ -161,6 +165,24 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
               onChange={(e) => setConfig({ ...config, timeoutMs: Number(e.target.value) })}
               aria-describedby={describedBy}
               className={`${controlClass(invalid)} tabular-nums font-medium`}
+            />
+          )}
+        </Field>
+        <Field
+          label="Model default"
+          error={action.fieldErrors.defaultModel}
+          className="sm:col-span-2"
+          hint="Dipakai uji koneksi dan routing. Menyimpan model lain membatalkan status teruji, jadi uji lagi setelahnya."
+        >
+          {({ id, describedBy, invalid }) => (
+            <input
+              id={id}
+              type="text"
+              value={config.defaultModel}
+              onChange={(e) => setConfig({ ...config, defaultModel: e.target.value })}
+              aria-describedby={describedBy}
+              placeholder="Ketik model id, atau pilih dari daftar di bawah"
+              className={`${controlClass(invalid)} font-medium`}
             />
           )}
         </Field>
@@ -237,7 +259,19 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
  */
 function ProviderModels({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
   const action = useAction()
+  const [savingModel, setSavingModel] = useState<string | null>(null)
   const models = provider.models ?? []
+
+  /**
+   * Make a listed model the provider's default (AI_PROVIDER_ARCHITECTURE §5: the list is a picker, the typed id stays
+   * available). The route clears the recorded test on a model change, so the card reloads and a new test is due.
+   */
+  async function makeDefault(modelId: string) {
+    setSavingModel(modelId)
+    const res = await action.run(() => api.updateProvider(provider.id, { defaultModel: modelId }))
+    setSavingModel(null)
+    if (res !== null) onChanged()
+  }
 
   /** Ask the endpoint for its model list. An empty answer is a real empty list, never a fallback. */
   async function load() {
@@ -268,10 +302,22 @@ function ProviderModels({ provider, onChanged }: { provider: ProviderView; onCha
             models.length > 0 ? (
               <ul aria-label={`Model ${provider.name}`} className="divide-y divide-border rounded-[12px] border border-border">
                 {models.map((m) => (
-                  <li key={`${provider.id}:${m}`} className="px-3 py-2">
-                    <span className="block truncate text-md font-medium" title={m}>
+                  <li key={`${provider.id}:${m}`} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="block min-w-0 truncate text-md font-medium" title={m}>
                       {m}
                     </span>
+                    {m === provider.defaultModel ? (
+                      <Badge tone="success">Default</Badge>
+                    ) : (
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        onClick={() => void makeDefault(m)}
+                        disabled={action.busy || savingModel !== null}
+                      >
+                        Jadikan default
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
