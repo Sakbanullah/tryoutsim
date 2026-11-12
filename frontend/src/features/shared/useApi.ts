@@ -8,6 +8,14 @@ export type Load<T> =
   | { phase: 'done'; outcome: Outcome<T> }
 
 /**
+ * Map a one-off result onto the same `Load` state a screen uses, so a dialog read reports a failure as a failure
+ * (with a retry) instead of falling back to an empty list.
+ */
+export function toLoad<T>(result: Result<T>): Load<T> {
+  return { phase: 'done', outcome: result.ok ? { kind: 'ok', data: result.data } : toOutcome(result.failure) }
+}
+
+/**
  * Runs one route on mount and on demand, mapping a failure through the single error mapper.
  * A late response from a previous run is discarded, so a screen never renders stale data.
  */

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../data'
 import type { Package, SessionSummary } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
-import { useApi } from '../shared/useApi'
+import { toLoad, useApi } from '../shared/useApi'
+import type { Load } from '../shared/useApi'
 import { actionMessage, useAction } from '../shared/useAction'
 import { ArrowLink, Badge, Button, Dialog, EmptyState, Notice, Panel, buttonClass } from '../../ui/ui'
 import { PageHeader } from '../../ui/page'
@@ -111,14 +112,21 @@ function PackageCard({ pkg, onDeleted }: { pkg: Package; onDeleted: () => void }
   const { definition } = pkg
   const repeat = repeatStatement(pkg)
   const [confirming, setConfirming] = useState(false)
-  const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
+  // Null means "not read yet". A failed read is its own state, never an empty list: the dialog must not claim
+  // "no sessions" when it simply could not ask (AGENTS.md: no fallback that hides a failure).
+  const [sessions, setSessions] = useState<Load<SessionSummary[]> | null>(null)
   const action = useAction()
 
-  // The sessions are read when the dialog opens, so the warning names the real count, and are not read again.
+  /** Read the package's sessions for the dialog; a failure keeps its outcome so the dialog can offer a retry. */
+  const readSessions = useCallback(() => {
+    setSessions({ phase: 'loading' })
+    void api.sessions().then((res) => setSessions(toLoad(res.ok ? { ok: true, data: res.data.filter((s) => s.packageId === pkg.id) } : res)))
+  }, [pkg.id])
+
+  // The sessions are read when the dialog opens, so the warning names the real count, and read again only on retry.
   useEffect(() => {
-    if (!confirming || sessions !== null) return
-    void api.sessions().then((res) => setSessions(res.ok ? res.data.filter((s) => s.packageId === pkg.id) : []))
-  }, [confirming, sessions, pkg.id])
+    if (confirming && sessions === null) readSessions()
+  }, [confirming, sessions, readSessions])
 
   /** Retire this package. A non-null result means it left the list. */
   async function remove() {
@@ -203,11 +211,19 @@ function PackageCard({ pkg, onDeleted }: { pkg: Package; onDeleted: () => void }
         }
       >
         <p>Paket ini akan dihapus dari daftar tryout. Tindakan ini tidak dapat dibatalkan.</p>
-        {sessions !== null && sessions.length > 0 ? (
+        {sessions?.phase === 'done' && sessions.outcome.kind === 'ok' && sessions.outcome.data.length > 0 ? (
           <Notice tone="lavender" className="mt-3">
-            Paket ini punya <span className="tabular-nums font-semibold">{sessions.length}</span> sesi
-            {sessions.some((s) => s.status === 'scored') ? ', termasuk sesi yang sudah dinilai,' : ''} yang tetap
-            tersimpan dan bisa dibuka di Riwayat.
+            Paket ini punya <span className="tabular-nums font-semibold">{sessions.outcome.data.length}</span> sesi
+            {sessions.outcome.data.some((s) => s.status === 'scored') ? ', termasuk sesi yang sudah dinilai,' : ''} yang
+            tetap tersimpan dan bisa dibuka di Riwayat.
+          </Notice>
+        ) : null}
+        {sessions?.phase === 'done' && sessions.outcome.kind !== 'ok' ? (
+          <Notice tone="warning" className="mt-3" title="Jumlah sesi tidak dapat dibaca">
+            Sesinya tetap tersimpan dan bisa dibuka di Riwayat.{' '}
+            <button type="button" className="font-semibold underline" onClick={readSessions} disabled={action.busy}>
+              Coba lagi
+            </button>
           </Notice>
         ) : null}
         {action.failure ? (
