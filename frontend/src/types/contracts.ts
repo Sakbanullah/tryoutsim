@@ -406,7 +406,15 @@ export type GenerationJob = {
 export type DuplicateCluster = { contentHash: string; count: number }
 
 /** GAP-M6 — a provider row with the secret tail the display rule expects. */
-export type ProviderView = Provider & { keyLast4?: string; hasKey: boolean; capabilities?: ModelCapabilities }
+export type ProviderView = Provider & {
+  keyLast4?: string
+  hasKey: boolean
+  capabilities?: ModelCapabilities
+  /** The provider's own default model (`provider.defaultModel` on the wire). */
+  defaultModel?: string
+  /** Last `listModels()` result, from the provider's model cache. Display only — never an allow-list. */
+  models?: string[]
+}
 
 /** GAP-M8 — task→model map. */
 export type TaskId = 'question' | 'explanation' | 'material' | 'analysis'

@@ -36,6 +36,18 @@ reasonOf(await mockClient.startSession({ packageId: 'pkg-tryout-twk', mode: 'try
 const started = await mockClient.startSession({ packageId: 'pkg-drill-numerik', mode: 'latihan' })
 check(started.ok, 'drill package starts')
 
+// Retiring leaves the list, keeps the package readable, and is refused twice.
+const beforeRetire = await mockClient.sessions()
+check((await mockClient.retirePackage('nope')).ok === false, 'unknown package is not retirable')
+const retired = await mockClient.retirePackage('pkg-tryout-tiu')
+check(retired.ok && retired.data.retiredAt !== null, 'package retired')
+reasonOf(await mockClient.retirePackage('pkg-tryout-tiu'), 'illegal_transition')
+check((await mockClient.package('pkg-tryout-tiu')).ok, 'a retired package stays readable')
+const listedAfter = await mockClient.packages()
+check(!listedAfter.ok || !listedAfter.data.some((p) => p.id === 'pkg-tryout-tiu'), 'retired package is not listed')
+const afterRetire = await mockClient.sessions()
+check(beforeRetire.ok && afterRetire.ok && afterRetire.data.length === beforeRetire.data.length, 'session history untouched')
+
 // A provisional session is startable; it scores with `approval: null` (the withheld verdict) until approved.
 if (started.ok) {
   const scored = await mockClient.submitSession(started.data.sessionId, { answers: [] })

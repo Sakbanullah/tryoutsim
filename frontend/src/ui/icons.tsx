@@ -115,6 +115,14 @@ export const IconFlag = (p: IconProps) => (
     <path d="M6 4.6h9.6l-1.5 3.4 1.5 3.4H6" />
   </Svg>
 )
+export const IconTrash = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 7h14" />
+    <path d="M9.6 7V5.2a1.2 1.2 0 0 1 1.2-1.2h2.4a1.2 1.2 0 0 1 1.2 1.2V7" />
+    <path d="M6.6 7l.8 11.6a1.6 1.6 0 0 0 1.6 1.5h6a1.6 1.6 0 0 0 1.6-1.5L17.4 7" />
+    <path d="M10.2 11v5M13.8 11v5" />
+  </Svg>
+)
 export const IconLock = (p: IconProps) => (
   <Svg {...p}>
     <rect x="5" y="10.5" width="14" height="9.8" rx="2.2" />

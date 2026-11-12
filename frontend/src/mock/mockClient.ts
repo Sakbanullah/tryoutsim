@@ -395,7 +395,8 @@ export const mockClient: ApiClient = {
 
   async packages(mode) {
     await wait()
-    return ok(mode ? PACKAGES.filter((p) => p.mode === mode) : PACKAGES)
+    const active = PACKAGES.filter((p) => p.retiredAt === null)
+    return ok(mode ? active.filter((p) => p.mode === mode) : active)
   },
 
   async package(id) {
@@ -424,6 +425,7 @@ export const mockClient: ApiClient = {
     await wait()
     const pkg = PACKAGES.find((p) => p.id === id)
     if (!pkg) return fail(notFound('paket'))
+    if (pkg.retiredAt) return fail(conflict('illegal_transition'))
     pkg.retiredAt = new Date().toISOString()
     return ok(pkg)
   },

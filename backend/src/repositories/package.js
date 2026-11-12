@@ -1,7 +1,7 @@
 /**
  * Package aggregate: listing, current version, availability (API_ENDPOINTS §3, PACKAGE_SPECIFICATION §2–§4, §5).
  *
- * Reads only; selection itself lives in `session.js` because it needs the same eligibility query.
+ * The only write is retiring; selection itself lives in `session.js` because it needs the same eligibility query.
  */
 
 import { conflict, notFound } from '../errors.js';
@@ -9,7 +9,8 @@ import { parseJson } from '../domain/exam-config.js';
 import { estimateSelection } from './session.js';
 
 /**
- * Rows of `package` joined with their highest `package_version` (the current version).
+ * Active rows of `package` joined with their highest `package_version` (the current version); a retired package is
+ * no longer listed, though its versions and sessions stay readable (§5).
  * @param {import('../generated/prisma/client.ts').PrismaClient} prisma
  * @param {'tryout' | 'latihan' | null} mode
  * @returns {Promise<object[]>}
@@ -25,7 +26,7 @@ export async function listPackages(prisma, mode) {
         SELECT "version", "definitionJson", "titleId", "examConfigId", "examConfigVersion" FROM "package_version"
         WHERE "packageId" = p."id" ORDER BY "version" DESC LIMIT 1
       ) v ON true
-      WHERE p."mode" = ${mode}
+      WHERE p."mode" = ${mode} AND p."retiredAt" IS NULL
       ORDER BY p."mode", v."titleId"`;
   }
   return prisma.$queryRaw`
@@ -37,6 +38,7 @@ export async function listPackages(prisma, mode) {
       SELECT "version", "definitionJson", "titleId", "examConfigId", "examConfigVersion" FROM "package_version"
       WHERE "packageId" = p."id" ORDER BY "version" DESC LIMIT 1
     ) v ON true
+    WHERE p."retiredAt" IS NULL
     ORDER BY p."mode", v."titleId"`;
 }
 

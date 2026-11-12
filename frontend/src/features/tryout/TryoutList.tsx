@@ -1,11 +1,13 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../data'
-import type { Package } from '../../types/contracts'
+import type { Package, SessionSummary } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
 import { useApi } from '../shared/useApi'
-import { ArrowLink, Badge, Button, EmptyState, Notice, Panel, buttonClass } from '../../ui/ui'
+import { actionMessage, useAction } from '../shared/useAction'
+import { ArrowLink, Badge, Button, Dialog, EmptyState, Notice, Panel, buttonClass } from '../../ui/ui'
 import { PageHeader } from '../../ui/page'
-import { IconArrowUpRight, IconInfo, IconShield } from '../../ui/icons'
+import { IconArrowUpRight, IconInfo, IconShield, IconTrash } from '../../ui/icons'
 import { readLastResultPointer } from '../shared/format'
 import { availabilityText, definitionTitle, repeatStatement, unavailableReason } from '../shared/package'
 
@@ -53,7 +55,7 @@ export default function TryoutList() {
               <ul className="grid gap-4 md:grid-cols-2">
                 {list.map((p) => (
                   <li key={p.id}>
-                    <PackageCard pkg={p} />
+                    <PackageCard pkg={p} onDeleted={packages.retry} />
                   </li>
                 ))}
               </ul>
@@ -99,22 +101,57 @@ export default function TryoutList() {
   )
 }
 
-/** One package card: title, version, subtest, item count, availability and the repeat statement. */
-function PackageCard({ pkg }: { pkg: Package }) {
+/**
+ * One package card: title, version, subtest, item count, availability and the repeat statement, plus the delete
+ * action. Deleting retires the package on the server (PACKAGE_SPECIFICATION §5), so the list is re-read and the
+ * card leaves it; its sessions and results stay in Riwayat.
+ */
+function PackageCard({ pkg, onDeleted }: { pkg: Package; onDeleted: () => void }) {
   const startable = pkg.availability.startable
   const { definition } = pkg
   const repeat = repeatStatement(pkg)
+  const [confirming, setConfirming] = useState(false)
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
+  const action = useAction()
+
+  // The sessions are read when the dialog opens, so the warning names the real count, and are not read again.
+  useEffect(() => {
+    if (!confirming || sessions !== null) return
+    void api.sessions().then((res) => setSessions(res.ok ? res.data.filter((s) => s.packageId === pkg.id) : []))
+  }, [confirming, sessions, pkg.id])
+
+  /** Retire this package. A non-null result means it left the list. */
+  async function remove() {
+    const done = await action.run(() => api.retirePackage(pkg.id))
+    if (done) {
+      setConfirming(false)
+      onDeleted()
+    }
+  }
+
   const body = (
     <Panel
       className={
         startable
-          ? 'group flex h-full flex-col p-5 transition-[box-shadow,transform,border-color] duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-panel-hover'
-          : 'flex h-full flex-col bg-surface-muted/70 p-5'
+          ? 'group relative flex h-full flex-col p-5 transition-[box-shadow,transform,border-color] duration-200 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-panel-hover'
+          : 'relative flex h-full flex-col bg-surface-muted/70 p-5'
       }
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h2 className="font-display text-xl">{pkg.titleId}</h2>
-        <Badge tone={startable ? 'success' : 'warning'}>{availabilityText(pkg)}</Badge>
+        <div className="flex items-center gap-1">
+          <Badge tone={startable ? 'success' : 'warning'}>{availabilityText(pkg)}</Badge>
+          <Button
+            variant="quiet"
+            size="sm"
+            className="relative z-10"
+            aria-label={`Hapus paket ${pkg.titleId}`}
+            title="Hapus paket"
+            onClick={() => setConfirming(true)}
+          >
+            <IconTrash size={16} />
+          </Button>
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <Badge tone="neutral">v{pkg.version}</Badge>
@@ -147,6 +184,38 @@ function PackageCard({ pkg }: { pkg: Package }) {
           ) : null}
         </div>
       )}
+
+      <Dialog
+        open={confirming}
+        title="Hapus paket tryout?"
+        onClose={() => {
+          if (!action.busy) setConfirming(false)
+        }}
+        footer={
+          <>
+            <Button variant="quiet" onClick={() => setConfirming(false)} disabled={action.busy}>
+              Batal
+            </Button>
+            <Button variant="danger" onClick={() => void remove()} disabled={action.busy}>
+              {action.busy ? 'Menghapus…' : 'Hapus paket'}
+            </Button>
+          </>
+        }
+      >
+        <p>Paket ini akan dihapus dari daftar tryout. Tindakan ini tidak dapat dibatalkan.</p>
+        {sessions !== null && sessions.length > 0 ? (
+          <Notice tone="lavender" className="mt-3">
+            Paket ini punya <span className="tabular-nums font-semibold">{sessions.length}</span> sesi
+            {sessions.some((s) => s.status === 'scored') ? ', termasuk sesi yang sudah dinilai,' : ''} yang tetap
+            tersimpan dan bisa dibuka di Riwayat.
+          </Notice>
+        ) : null}
+        {action.failure ? (
+          <Notice tone="danger" className="mt-3">
+            {actionMessage(action.failure)}
+          </Notice>
+        ) : null}
+      </Dialog>
     </Panel>
   )
 

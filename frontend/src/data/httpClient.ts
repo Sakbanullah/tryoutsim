@@ -280,8 +280,10 @@ function buildClient(): ApiClient {
     async packageVersion() {
       return { ok: false, failure: notAvailable('POST /packages/:id/versions') }
     },
-    async retirePackage() {
-      return { ok: false, failure: notAvailable('POST /packages/:id/retire') }
+    async retirePackage(id) {
+      // "Deleting a package retires it": the row and its sessions stay, it only leaves the list.
+      const res = await request<Wire>('POST', `/packages/${encodeURIComponent(id)}/retire`)
+      return res.ok ? ok(toPackage(res.data)) : res
     },
     async startSession({ packageId, mode }) {
       // `POST /packages/:id/sessions` → `{ session: { sessionId, … }, runner, configResolution }`.
