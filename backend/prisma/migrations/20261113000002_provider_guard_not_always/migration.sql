@@ -1,0 +1,12 @@
+-- ---------------------------------------------------------------------------
+-- Provider delete guard: stop firing during restores (2026-11-13)
+-- ---------------------------------------------------------------------------
+-- `provider_delete_guard` must run for application deletes and must NOT run for the
+-- rows a provider cascade takes with it: those rows are already going, so the guard
+-- would raise 23503 for a job the cascade is deleting and roll the statement back.
+-- `ENABLE ALWAYS` makes it fire under `session_replication_role = replica` too, which
+-- a restore uses, so any restored database holding a provider with a job would fail
+-- its restore. `ENABLE` (origin and local) is the right scope.
+-- Idempotent.
+-- ---------------------------------------------------------------------------
+ALTER TABLE "provider" ENABLE TRIGGER provider_delete_guard;
