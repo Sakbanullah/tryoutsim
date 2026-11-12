@@ -25,7 +25,6 @@ __pycache__/
 .env.*
 *.key
 *.pem
-secrets/
 secret_ref/
 
 # Editor/IDE
