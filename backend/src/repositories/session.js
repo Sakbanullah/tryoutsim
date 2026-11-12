@@ -293,6 +293,16 @@ export async function createSession(prisma, { pkg, version }, mode, nowIso) {
 
   try {
     const session = await prisma.$transaction(async (tx) => {
+      // BUG-002: re-read the package under a row lock before writing. `retirePackage` updates this row before any
+      // fixture check, so two orders are possible: a retire that commits first makes this wait, then see `retiredAt`;
+      // one that begins while this transaction is open takes its lock behind the `session` insert's FOR KEY SHARE
+      // parent check and waits for this commit. `FOR KEY SHARE` is the lock `session`'s foreign key takes anyway, so
+      // ordinary session creation never waits on a concurrent one, and this is the transaction's only lock until
+      // commit.
+      const [current] = await tx.$queryRaw`SELECT "retiredAt" FROM "package" WHERE "id" = ${pkg.id} FOR KEY SHARE`;
+      if (!current || current.retiredAt !== null) {
+        throw conflict('package', 'package_retired', 'This package has been retired.');
+      }
       const created = await tx.session.create({
         data: {
           id: sessionId,
@@ -316,6 +326,7 @@ export async function createSession(prisma, { pkg, version }, mode, nowIso) {
     });
     return { session, snapshotVersion, configResolution };
   } catch (error) {
+    if (error instanceof AppError) throw error;
     translateDbError(error, { resource: 'session', id: sessionId });
   }
 }

@@ -392,6 +392,8 @@ function memoryPrisma(tables, onUpdate = () => {}) {
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?');
       if (sql.includes('exists')) return [{ exists: true }].filter(() => values[0]);
+      // `createSession`'s package guard (BUG-002): one row of the package named by the id parameter.
+      if (sql.includes('FROM "package"')) return table('package').filter((row) => row.id === values[0]).map((row) => ({ retiredAt: row.retiredAt }));
       return [{ n: 0 }];
     },
   };

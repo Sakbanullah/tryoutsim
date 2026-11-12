@@ -4,7 +4,7 @@
  * Reads only; selection itself lives in `session.js` because it needs the same eligibility query.
  */
 
-import { notFound } from '../errors.js';
+import { conflict, notFound } from '../errors.js';
 import { parseJson } from '../domain/exam-config.js';
 import { estimateSelection } from './session.js';
 
@@ -116,6 +116,28 @@ export function availabilityOf({ definition, selection }) {
     startable: definition !== null && required > 0 && selection.selected > 0,
     unavailableReason,
   };
+}
+
+/**
+ * Retire a package (PACKAGE_SPECIFICATION §5 "deleting a package retires it"): the row keeps `retiredAt`, and its
+ * versions and sessions stay untouched because a session may reference them. Retiring twice is refused.
+ * @param {import('../generated/prisma/client.ts').PrismaClient} prisma
+ * @param {string} packageId
+ * @param {string} retiredAt ISO timestamp of the act
+ * @returns {Promise<{pkg: object, version: object}>} the retired package with its current version
+ */
+export async function retirePackage(prisma, packageId, retiredAt) {
+  // BUG-002: one conditional UPDATE decides the retire, so a concurrent retire or session start sees a single row
+  // lock instead of a check-then-write gap.
+  const { count } = await prisma.package.updateMany({ where: { id: packageId, retiredAt: null }, data: { retiredAt } });
+  if (count === 0) {
+    const existing = await prisma.package.findUnique({ where: { id: packageId } });
+    if (!existing) throw notFound('package', packageId);
+    throw conflict('package', 'illegal_transition', 'The package is already retired.');
+  }
+  const found = await findPackage(prisma, packageId);
+  if (!found) throw notFound('package', packageId);
+  return found;
 }
 
 /**
