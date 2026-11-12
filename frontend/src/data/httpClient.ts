@@ -474,9 +474,9 @@ function buildClient(): ApiClient {
     async deleteProvider(id) {
       return request<null>('DELETE', `/providers/${encodeURIComponent(id)}`)
     },
-    async testProvider(id) {
-      // The model id comes from the provider's `defaultModel`; a failed test is a 200 with `ok: false`.
-      return request<{ ok: boolean; latencyMs: number }>('POST', `/providers/${encodeURIComponent(id)}/test`, {})
+    async testProvider(id, modelId) {
+      // The model id defaults to the provider's `defaultModel`; a failed test is a 200 with `ok: false`.
+      return request<{ ok: boolean; latencyMs: number }>('POST', `/providers/${encodeURIComponent(id)}/test`, modelId ? { modelId } : {})
     },
     async saveCapabilities(id, body) {
       return request<ProviderView>('PUT', `/providers/${encodeURIComponent(id)}/capabilities`, body)

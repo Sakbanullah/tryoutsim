@@ -1,27 +1,20 @@
 import { useState } from 'react'
 import { api } from '../../data'
-import type { AiRouting, ModelCapabilities, ProviderView, TaskId, TaskMapEntry } from '../../types/contracts'
+import type { ModelCapabilities, ProviderView } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
 import { useApi } from '../shared/useApi'
 import { actionMessage, useAction } from '../shared/useAction'
-import { Badge, Button, Dialog, Field, Notice, Panel, controlClass } from '../../ui/ui'
+import { Badge, Button, Dialog, Field, Notice, Panel, Skeleton, controlClass } from '../../ui/ui'
 import { Block, PageHeader } from '../../ui/page'
 import { BackLink } from '../../shell/Layout'
 import { IconAlert, IconCheck, IconPlug, IconRefresh, IconSparkle } from '../../ui/icons'
 
 /**
  * Pengaturan AI (`/lainnya/ai`) — PAGE_SPECIFICATIONS §15.
- * Providers, one global default, four per-feature overrides, capability flags with their source
- * (`otomatis` / `diatur manual`), and the connection test. The key is write-only: the create form
- * takes it, the list only ever renders `keyLast4`. Token counts, cost and price are never shown.
+ * Providers with their endpoint, connection status and model list, the capability flags with their
+ * source (`otomatis` / `diatur manual`), and the connection test. The key is write-only: the create
+ * form takes it, the card only ever renders `keyLast4`. Token counts, cost and price are never shown.
  */
-
-const TASKS: Array<{ id: TaskId; label: string }> = [
-  { id: 'question', label: 'Soal' },
-  { id: 'explanation', label: 'Penjelasan' },
-  { id: 'material', label: 'Materi' },
-  { id: 'analysis', label: 'Analisis' },
-]
 
 const PRESETS = [
   { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1' },
@@ -32,12 +25,8 @@ const PRESETS = [
 
 export default function AiSettings() {
   const providers = useApi<ProviderView[]>(() => api.providers(), [])
-  const routing = useApi<AiRouting>(() => api.routing(), [])
   const [creating, setCreating] = useState(false)
-  const reload = () => {
-    providers.retry()
-    routing.retry()
-  }
+  const reload = () => providers.retry()
 
   return (
     <div className="animate-rise space-y-6">
@@ -60,7 +49,7 @@ export default function AiSettings() {
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
+      <div className="space-y-6">
         <section aria-labelledby="providers-title" className="space-y-4">
           <h2 id="providers-title" className="text-xl">
             Penyedia
@@ -77,18 +66,6 @@ export default function AiSettings() {
             }
           </OutcomeView>
         </section>
-
-        <Panel tone="muted" className="p-6">
-          <OutcomeView state={routing.state} retry={routing.retry} loadingLines={3}>
-            {(r) => (
-              <RoutingPanel
-                key={routingKey(r)}
-                routing={r}
-                providers={providers.state.phase === 'done' && providers.state.outcome.kind === 'ok' ? providers.state.outcome.data : []}
-              />
-            )}
-          </OutcomeView>
-        </Panel>
       </div>
 
       <CreateProviderDialog open={creating} onClose={() => setCreating(false)} onCreated={reload} />
@@ -109,18 +86,12 @@ function IconPlugin() {
 
 function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
-  const [models, setModels] = useState<string[] | null>(null)
   const action = useAction()
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   async function runTest() {
     const res = await action.run(() => api.testProvider(provider.id))
     if (res) setTest({ ok: res.ok, text: res.ok ? `Terhubung (${res.latencyMs} ms). Kemampuan model diperiksa.` : 'Penyedia menjawab, tetapi menolak permintaan percobaan.' })
-  }
-
-  async function loadModels() {
-    const res = await action.run(() => api.refreshModels(provider.id))
-    if (res) setModels(res)
   }
 
   return (
@@ -165,13 +136,9 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
         </div>
       </dl>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4">
         <Button variant="secondary" size="sm" onClick={() => void runTest()} disabled={action.busy}>
           {action.busy ? 'Menguji…' : 'Uji koneksi'}
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => void loadModels()} disabled={action.busy}>
-          <IconSparkle size={15} />
-          Muat daftar model
         </Button>
       </div>
       {test ? (
@@ -179,27 +146,13 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
           {test.text}
         </p>
       ) : null}
-      {models ? (
-        <div className="mt-3">
-          <p className="text-sm font-medium">Model tersedia</p>
-          {models.length === 0 ? (
-            <p className="text-sm text-muted">Daftar model kosong. Nama model bisa diisi manual di bawah.</p>
-          ) : (
-            <ul className="mt-1.5 flex flex-wrap gap-1.5">
-              {models.map((m) => (
-                <li key={m}>
-                  <Badge tone="neutral">{m}</Badge>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : null}
       {action.failure ? (
         <Notice tone="danger" className="mt-3">
           {actionMessage(action.failure)}
         </Notice>
       ) : null}
+
+      <ProviderModels provider={provider} onChanged={onChanged} />
 
       {provider.capabilities ? <CapabilityEditor provider={provider} onSaved={onChanged} /> : null}
 
@@ -231,6 +184,63 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
         <p>Provider ini akan dihapus dari pengaturan. Kunci yang tersimpan ikut dihapus dan tidak bisa dipulihkan.</p>
       </Dialog>
     </Panel>
+  )
+}
+
+/**
+ * A provider's models, inside its own card. `POST /providers/:id/models` asks the endpoint
+ * (`GET /v1/models` for OpenAI-compatible providers) and stores the answer on the provider row, so the
+ * rows survive a reload; they are always the endpoint's answer, never a static list.
+ */
+function ProviderModels({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
+  const action = useAction()
+  const models = provider.models ?? []
+
+  /** Ask the endpoint for its model list. An empty answer is a real empty list, never a fallback. */
+  async function load() {
+    const res = await action.run(() => api.refreshModels(provider.id))
+    if (res === null) return
+    onChanged()
+  }
+
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <Block title="Models" hint={`Daftar dari ${provider.baseUrl}/models.`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => void load()} disabled={action.busy}>
+            <IconSparkle size={15} />
+            {action.busy ? 'Memuat…' : 'Muat daftar model'}
+          </Button>
+          <span className="text-sm text-muted tabular-nums">{models.length} model</span>
+        </div>
+
+        <div className="mt-3" aria-live="polite">
+          {action.busy ? <Skeleton lines={3} /> : null}
+          {action.failure ? (
+            <Notice tone="danger" title="Gagal memuat daftar model">
+              {actionMessage(action.failure)}
+            </Notice>
+          ) : null}
+          {!action.busy && !action.failure ? (
+            models.length > 0 ? (
+              <ul aria-label={`Model ${provider.name}`} className="divide-y divide-border rounded-[12px] border border-border">
+                {models.map((m) => (
+                  <li key={`${provider.id}:${m}`} className="px-3 py-2">
+                    <span className="block truncate text-md font-medium" title={m}>
+                      {m}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">
+                {provider.models ? 'Endpoint tidak mengembalikan model.' : 'Daftar model belum dimuat.'}
+              </p>
+            )
+          ) : null}
+        </div>
+      </Block>
+    </div>
   )
 }
 
@@ -300,123 +310,6 @@ function CapabilityEditor({ provider, onSaved }: { provider: ProviderView; onSav
           </Notice>
         ) : null}
       </Block>
-    </form>
-  )
-}
-
-/* ── Global default and per-task routing ─────────────────────────────────────────────── */
-
-/**
- * One global default, then the four overrides. Saving sends the whole map through
- * `PUT /ai-routing`; a task left on "Ikut default" is stored with nulls, which is what the route
- * means by no override.
- */
-/** Re-keys the panel when the stored routing changes, so re-opening the screen shows saved values. */
-const routingKey = (r: AiRouting) => `${r.default.providerId ?? ''}:${r.default.modelId ?? ''}:${r.perTask.map((t) => `${t.task}=${t.modelId ?? ''}`).join('|')}`
-
-/** Routes the per-task map: "Ikut default" stores nulls, the explicit pair stores the provider + model. */
-function RoutingPanel({ routing, providers }: { routing: AiRouting; providers: ProviderView[] }) {
-  const action = useAction()
-  const [draft, setDraft] = useState<AiRouting>(routing)
-  const [saved, setSaved] = useState(false)
-
-  const pair = (t: TaskMapEntry) =>
-    t.providerId && t.modelId ? `${providers.find((p) => p.id === t.providerId)?.name ?? t.providerId} · ${t.modelId}` : 'Ikut default'
-
-  return (
-    <form
-      onSubmit={async (e) => {
-        e.preventDefault()
-        const done = await action.run(() => api.saveRouting(draft))
-        if (done) {
-          setSaved(true)
-          window.setTimeout(() => setSaved(false), 4000)
-        }
-      }}
-    >
-      <Block title="Default global">
-        <p className="text-sm text-muted">Dipakai untuk semua fitur kecuali yang diatur khusus.</p>
-        <div className="mt-2 grid gap-2">
-          <Field label="Penyedia">
-            {(ids) => (
-              <select
-                id={ids.id}
-                value={draft.default.providerId ?? ''}
-                onChange={(e) => setDraft({ ...draft, default: { ...draft.default, providerId: e.target.value || null, modelId: null } })}
-                className={`${controlClass()} min-h-10`}
-              >
-                <option value="">Belum diatur</option>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-          <Field label="Model">
-            {(ids) => (
-              <input
-                id={ids.id}
-                value={draft.default.modelId ?? ''}
-                onChange={(e) => setDraft({ ...draft, default: { ...draft.default, modelId: e.target.value || null } })}
-                placeholder="nama model"
-                className={`${controlClass()} min-h-10`}
-              />
-            )}
-          </Field>
-        </div>
-      </Block>
-
-      <div className="mt-5 border-t border-border pt-4">
-        <Block title="Per fitur">
-          <ul className="space-y-2">
-            {TASKS.map((t) => {
-              const entry = draft.perTask.find((x) => x.task === t.id) ?? { task: t.id, providerId: null, modelId: null }
-              return (
-                <li key={t.id} className="flex items-center justify-between gap-3 text-md">
-                  <span>{t.label}</span>
-                  <span className="flex items-center gap-2">
-                    <span className={entry.modelId ? 'font-medium' : 'text-muted'}>{pair(entry)}</span>
-                    <Button
-                      size="sm"
-                      variant="quiet"
-                      type="button"
-                      onClick={() =>
-                        setDraft({
-                          ...draft,
-                          perTask: TASKS.map((x) => {
-                            const current = x.id === t.id ? (entry.modelId ? { task: x.id, providerId: null, modelId: null } : { task: x.id, providerId: draft.default.providerId, modelId: draft.default.modelId }) : draft.perTask.find((y) => y.task === x.id) ?? { task: x.id, providerId: null, modelId: null }
-                            return current
-                          }),
-                        })
-                      }
-                    >
-                      {entry.modelId ? 'Ikut default' : 'Pakai default'}
-                    </Button>
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-        </Block>
-      </div>
-
-      <div className="mt-4 flex items-center gap-3">
-        <Button type="submit" disabled={action.busy}>
-          {action.busy ? 'Menyimpan…' : 'Simpan'}
-        </Button>
-        {saved ? (
-          <span role="status" className="inline-flex items-center gap-1 text-sm font-medium text-success">
-            <IconCheck size={15} /> Tersimpan
-          </span>
-        ) : null}
-      </div>
-      {action.failure ? (
-        <Notice tone="danger" className="mt-3">
-          {actionMessage(action.failure)}
-        </Notice>
-      ) : null}
     </form>
   )
 }

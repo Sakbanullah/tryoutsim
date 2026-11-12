@@ -119,7 +119,7 @@ export type ApiClient = {
     retries: number
   }): Promise<Result<ProviderView>>
   deleteProvider(id: string): Promise<Result<null>>
-  testProvider(id: string): Promise<Result<{ ok: boolean; latencyMs: number }>>
+  testProvider(id: string, modelId?: string): Promise<Result<{ ok: boolean; latencyMs: number }>>
   saveCapabilities(id: string, body: ModelCapabilities): Promise<Result<ProviderView>>
   refreshModels(id: string): Promise<Result<string[]>>
   routing(): Promise<Result<AiRouting>>

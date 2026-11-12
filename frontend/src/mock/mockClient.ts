@@ -96,19 +96,23 @@ let approval: ProvisionalApproval | null = null
 let jobSeq = 1
 const jobs = new Map<string, GenerationJob>()
 
+const MOCK_MODELS = ['mock-model', 'mock-model-small']
+
 const PROVIDERS: ProviderView[] = [
   {
     id: 'local-mock',
     name: 'Local mock provider',
     baseUrl: 'http://127.0.0.1:11434/v1',
     keyRef: 'secret:local-mock',
+    keyLast4: 'MOCK',
+    hasKey: true,
     headers: {},
     timeoutMs: 30000,
     retries: 2,
     extraParams: {},
     createdAt: '2026-11-08T02:00:00.000Z',
-    hasKey: true,
-    keyLast4: 'MOCK',
+    defaultModel: 'mock-model',
+    models: [...MOCK_MODELS],
   },
 ]
 
@@ -950,16 +954,19 @@ export const mockClient: ApiClient = {
     return ok(null)
   },
 
-  async testProvider(id) {
+  async testProvider(id, modelId) {
     await wait()
     if (!PROVIDERS.some((p) => p.id === id)) return fail(notFound('penyedia'))
+    void modelId
     return ok({ ok: true, latencyMs: 412 })
   },
 
   async refreshModels(id) {
     await wait()
-    if (!PROVIDERS.some((p) => p.id === id)) return fail(notFound('penyedia'))
-    return ok(['mock-model', 'mock-model-small'])
+    const provider = PROVIDERS.find((p) => p.id === id)
+    if (!provider) return fail(notFound('penyedia'))
+    provider.models = MOCK_MODELS
+    return ok([...MOCK_MODELS])
   },
 
   async saveCapabilities(id, body): Promise<Result<ProviderView>> {

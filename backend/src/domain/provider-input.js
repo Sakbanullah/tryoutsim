@@ -210,6 +210,12 @@ export function toProviderView(row, secret) {
     headers: parsed(row.headersJson) ?? {},
     extraParams: parsed(row.extraParamsJson) ?? {},
     testedAt: row.testedAt,
+    // Last `POST …/models` result, so a reload shows the list again instead of an empty one.
+    // Display only: it is never an allow-list (AI_PROVIDER_ARCHITECTURE §5).
+    models: (() => {
+      const cached = parsed(row.modelCacheJson);
+      return Array.isArray(cached) ? cached.filter((id) => typeof id === 'string') : [];
+    })(),
     capabilities: { jsonMode: capability('jsonMode'), streaming: capability('streaming'), maxContext: capability('maxContext') },
   };
 }
