@@ -11,7 +11,7 @@ import { scrub } from '../src/domain/scrub.js';
 import { toProviderView } from '../src/domain/provider-input.js';
 import { parseCreateProvider, parseUpdateProvider } from '../src/domain/provider-input.js';
 import { AppError } from '../src/errors.js';
-import { entryName, keyLast4, createMemorySecretStore, STORE_KINDS } from '../src/secrets/secret-store.js';
+import { entryName, keyLast4, createMemorySecretStore, createWindowsCredentialStore, STORE_KINDS } from '../src/secrets/secret-store.js';
 
 const KEY = 'sk-live-abcdefghijklmnopQRST';
 
@@ -92,9 +92,37 @@ test('an Ollama preset needs no key; OpenRouter does', () => {
   assert.throws(() => parseCreateProvider({ preset: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' }), (error) => error.code === 'VALIDATION_FAILED');
 });
 
+test('the wire shape carries the cached model list, and an unparsable cache is an empty list', () => {
+  const row = {
+    id: 'p1', preset: 'custom', baseUrl: 'http://x.test/v1', defaultModel: '', timeoutMs: 1000,
+    testedAt: '2026-11-12T00:00:00.000Z', capabilityFlagsJson: '{}', headersJson: '{}', extraParamsJson: '{}',
+    modelCacheJson: '["m-1","m-2"]',
+  };
+  assert.deepEqual(toProviderView(row, null).models, ['m-1', 'm-2']);
+  assert.deepEqual(toProviderView({ ...row, modelCacheJson: null }, null).models, []);
+  assert.deepEqual(toProviderView({ ...row, modelCacheJson: 'not json' }, null).models, []);
+  assert.deepEqual(toProviderView({ ...row, modelCacheJson: '["m-1",7]' }, null).models, ['m-1']);
+});
+
 test('PATCH leaves the key untouched when absent and null removes it', () => {
   assert.equal('key' in parseUpdateProvider({ baseUrl: 'https://y.test/v1' }), false);
   assert.equal(parseUpdateProvider({ key: null }).key, null);
   assert.equal(parseUpdateProvider({ key: KEY }).key, KEY);
   assert.throws(() => parseUpdateProvider({ preset: 'ollama' }), (error) => error.code === 'VALIDATION_FAILED');
+});
+
+test('writeVerified: a store that does not return the key it stored is refused', async () => {
+  const store = createMemorySecretStore();
+  assert.equal(await store.writeVerified('n', 'k-1234').then(() => store.read('n')), 'k-1234');
+  const lying = { ...createMemorySecretStore(), read: async () => 'something-else' };
+  await assert.rejects(() => createMemorySecretStore().writeVerified.call(lying, 'n', 'k-1234'));
+});
+
+test('helper: a one-character key reads back as itself', async () => {
+  if (process.platform !== 'win32') return;
+  const store = createWindowsCredentialStore();
+  const name = `tryoutsim/test-${process.pid}`;
+  await store.writeVerified(name, 'a');
+  assert.equal(await store.read(name), 'a');
+  assert.equal(await store.delete(name), true);
 });

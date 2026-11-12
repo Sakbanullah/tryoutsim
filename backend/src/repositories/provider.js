@@ -76,7 +76,7 @@ export function createProviderStore({ prisma, secretStore, installId, logger = c
     const entry = entryNameOf(id);
     const hasKey = input.key !== null;
 
-    if (hasKey) await secretStore.write(entry, /** @type {string} */ (input.key));
+    if (hasKey) await secretStore.writeVerified(entry, /** @type {string} */ (input.key));
 
     try {
       return await prisma.$transaction(async (tx) => {
@@ -133,6 +133,7 @@ export function createProviderStore({ prisma, secretStore, installId, logger = c
     const resetsTest =
       (patch.baseUrl !== undefined && patch.baseUrl !== existing.baseUrl) ||
       (patch.defaultModel !== undefined && patch.defaultModel !== existing.defaultModel) ||
+      // `undefined` leaves the key untouched (SECRETS §3); only a write or a removal resets the test.
       patch.key !== undefined;
 
     /** @type {Record<string, unknown>} */
@@ -150,7 +151,7 @@ export function createProviderStore({ prisma, secretStore, installId, logger = c
 
     const entry = ref?.storeEntryName ?? entryNameOf(id);
     const previousKey = ref?.hasKey === 1 ? await secretStore.read(entry) : null;
-    if (patch.key !== null) await secretStore.write(entry, patch.key);
+    if (patch.key !== null) await secretStore.writeVerified(entry, patch.key);
 
     try {
       return await prisma.$transaction(async (tx) => {

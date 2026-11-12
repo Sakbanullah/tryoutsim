@@ -118,6 +118,7 @@ export type ApiClient = {
     timeoutMs: number
     retries: number
   }): Promise<Result<ProviderView>>
+  updateProvider(id: string, body: { baseUrl: string; timeoutMs: number }): Promise<Result<ProviderView>>
   deleteProvider(id: string): Promise<Result<null>>
   testProvider(id: string, modelId?: string): Promise<Result<{ ok: boolean; latencyMs: number }>>
   saveCapabilities(id: string, body: ModelCapabilities): Promise<Result<ProviderView>>

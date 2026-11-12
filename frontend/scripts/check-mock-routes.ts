@@ -69,6 +69,10 @@ check(sampled.ok && sampled.data.sampleStatus === 'sampled', 'clean sample marks
 const badKey = await mockClient.createProvider({ preset: 'custom', name: 'x', baseUrl: 'http://x', key: ' ', timeoutMs: 1, retries: 0 })
 check(!badKey.ok && badKey.failure.code === 'VALIDATION_FAILED', 'empty key rejected')
 reasonOf(await mockClient.deleteProvider('local-mock'), 'last_provider')
+// An endpoint edit is stored on the provider row, and a test still names only the provider.
+const edited = await mockClient.updateProvider('local-mock', { baseUrl: 'http://127.0.0.1:11434/v1', timeoutMs: 15000, retries: 1 })
+check(edited.ok && edited.data.timeoutMs === 15000 && edited.data.retries === 1, 'provider config edited in place')
+check((await mockClient.testProvider('local-mock')).ok, 'a saved provider is testable with no extra input')
 
 // Trends below three points are insufficient_data; a seeded history row is not deletable.
 const trend = await mockClient.trends('TKP.PELAYANAN_PUBLIK')

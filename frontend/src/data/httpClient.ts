@@ -471,6 +471,9 @@ function buildClient(): ApiClient {
       // The backend ignores `name` (no column) and needs no preset model; the body is the documented one.
       return request<ProviderView>('POST', '/providers', body)
     },
+    async updateProvider(id, body) {
+      return request<ProviderView>('PATCH', `/providers/${encodeURIComponent(id)}`, body)
+    },
     async deleteProvider(id) {
       return request<null>('DELETE', `/providers/${encodeURIComponent(id)}`)
     },

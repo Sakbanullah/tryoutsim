@@ -85,13 +85,25 @@ function IconPlugin() {
 /* ── One provider ─────────────────────────────────────────────────────────────────────── */
 
 function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
+  const [config, setConfig] = useState({ baseUrl: provider.baseUrl, timeoutMs: provider.timeoutMs })
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
   const action = useAction()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const dirty = config.baseUrl !== provider.baseUrl || config.timeoutMs !== provider.timeoutMs
 
+  /** Test the stored configuration. The key and the model come from the row, never from this form. */
   async function runTest() {
     const res = await action.run(() => api.testProvider(provider.id))
     if (res) setTest({ ok: res.ok, text: res.ok ? `Terhubung (${res.latencyMs} ms). Kemampuan model diperiksa.` : 'Penyedia menjawab, tetapi menolak permintaan percobaan.' })
+  }
+
+  /** Save the edited endpoint settings; a key is never part of this patch. */
+  async function saveConfig() {
+    const done = await action.run(() => api.updateProvider(provider.id, config))
+    if (done) {
+      setTest(null)
+      onChanged()
+    }
   }
 
   return (
@@ -117,29 +129,59 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
         </div>
       </div>
 
-      <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-        <div className="rounded-[10px] bg-surface-muted px-3 py-2 sm:col-span-2">
-          <dt className="text-muted">Alamat</dt>
-          <dd className="truncate font-medium" title={provider.baseUrl}>
-            {provider.baseUrl}
-          </dd>
-        </div>
+      <form
+        className="mt-3 grid gap-2 text-sm sm:grid-cols-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void saveConfig()
+        }}
+      >
+        <Field label="Alamat" error={action.fieldErrors.baseUrl} className="sm:col-span-2">
+          {({ id, describedBy, invalid }) => (
+            <input
+              id={id}
+              type="url"
+              required
+              value={config.baseUrl}
+              onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })}
+              aria-describedby={describedBy}
+              className={`${controlClass(invalid)} font-medium`}
+            />
+          )}
+        </Field>
+        <Field label="Batas waktu (ms)" error={action.fieldErrors.timeoutMs}>
+          {({ id, describedBy, invalid }) => (
+            <input
+              id={id}
+              type="number"
+              min={1000}
+              required
+              value={config.timeoutMs}
+              onChange={(e) => setConfig({ ...config, timeoutMs: Number(e.target.value) })}
+              aria-describedby={describedBy}
+              className={`${controlClass(invalid)} tabular-nums font-medium`}
+            />
+          )}
+        </Field>
         <div className="rounded-[10px] bg-surface-muted px-3 py-2">
-          <dt className="text-muted">Batas waktu</dt>
-          <dd className="tabular-nums font-medium">
-            {provider.timeoutMs} ms · {provider.retries} ulangan
-          </dd>
+          <dt className="text-muted">Ulangan</dt>
+          <dd className="tabular-nums font-medium">{provider.retries}</dd>
+          <p className="text-sm text-muted">Penyimpanan ulangan belum tersedia; nilainya dari bawaan sistem.</p>
         </div>
-        <div className="rounded-[10px] bg-surface-muted px-3 py-2">
-          <dt className="text-muted">Dibuat</dt>
-          <dd className="font-medium">{provider.createdAt.slice(0, 10)}</dd>
+        <div className="flex items-end">
+          <Button type="submit" variant="secondary" size="sm" disabled={action.busy || !dirty}>
+            Simpan perubahan
+          </Button>
         </div>
-      </dl>
+      </form>
 
       <div className="mt-4">
-        <Button variant="secondary" size="sm" onClick={() => void runTest()} disabled={action.busy}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => void runTest()} disabled={action.busy}>
           {action.busy ? 'Menguji…' : 'Uji koneksi'}
         </Button>
+        {dirty ? (
+          <span className="ml-2 text-sm text-muted">Pengaturan yang belum disimpan tidak ikut diuji.</span>
+        ) : null}
       </div>
       {test ? (
         <p role="status" className={test.ok ? 'mt-2 text-sm font-medium text-success' : 'mt-2 text-sm font-medium text-danger'}>

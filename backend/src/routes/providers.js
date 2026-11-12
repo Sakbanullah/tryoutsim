@@ -100,9 +100,19 @@ export function registerProviderRoutes(router, { prisma, providerStore, fetchImp
   router.add('POST', '/providers/:id/test', async ({ params, body }) => {
     const row = await requireProvider(params.id);
     const supplied = body === undefined ? {} : asObject(body);
-    const modelId = typeof supplied.modelId === 'string' && supplied.modelId.length > 0 ? supplied.modelId : row.defaultModel;
+    // A body id wins; else the row's default model; else the first model the endpoint last listed.
+    // Without one of those there is nothing to send the one-token chat to.
+    const cached = typeof row.modelCacheJson === 'string' ? JSON.parse(row.modelCacheJson) : null;
+    const listed = Array.isArray(cached) ? cached.find((id) => typeof id === 'string' && id.length > 0) : undefined;
+    const modelId = typeof supplied.modelId === 'string' && supplied.modelId.length > 0
+      ? supplied.modelId
+      : (row.defaultModel || listed);
     if (typeof modelId !== 'string' || modelId.length === 0) {
-      throw validationError([{ path: 'modelId', message: 'A model id is required to test this provider.', rule: 'required' }]);
+      throw validationError([{
+        path: 'modelId',
+        message: 'A model id is required to test this provider. Muat daftar model, lalu pilih satu sebagai model default.',
+        rule: 'required',
+      }]);
     }
     const transport = await transportFor({ row, readKey: providerStore.readKey, fetchImpl });
     const result = await guarded(params.id, () => transport.test(modelId));

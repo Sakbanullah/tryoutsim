@@ -944,6 +944,14 @@ export const mockClient: ApiClient = {
     return ok(provider)
   },
 
+  async updateProvider(id, body) {
+    await wait()
+    const provider = PROVIDERS.find((p) => p.id === id)
+    if (!provider) return fail(notFound('penyedia'))
+    Object.assign(provider, body)
+    return ok({ ...provider })
+  },
+
   async deleteProvider(id) {
     await wait()
     const index = PROVIDERS.findIndex((p) => p.id === id)
