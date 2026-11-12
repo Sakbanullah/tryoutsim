@@ -22,6 +22,15 @@ import { fileURLToPath } from 'node:url';
 /** The helper shipped beside this module. */
 export const DEFAULT_SCRIPT_PATH = fileURLToPath(new URL('./CredentialStore.ps1', import.meta.url));
 
+/**
+ * Credential Manager's `CRED_MAX_CREDENTIAL_BLOB_SIZE`, in bytes of UTF-16. A longer value is refused by
+ * `CredWriteW` ("The stub received bad data"). Not a size the app needs: only a probe detects it.
+ */
+export const MAX_BLOB_BYTES = 2560;
+
+/** The largest key a Windows credential entry can hold, in characters. */
+export const MAX_KEY_CHARS = MAX_BLOB_BYTES / 2;
+
 /** The store kinds the schema accepts (DATABASE_SCHEMA C-17). */
 export const STORE_KINDS = Object.freeze(['windows_credential_manager', 'macos_keychain', 'secret_service']);
 
@@ -119,12 +128,23 @@ export function createWindowsCredentialStore({ scriptPath = DEFAULT_SCRIPT_PATH,
     /** Store or replace a key under `name`. */
     async write(name, key) {
       if (typeof key !== 'string' || key.length === 0) throw new Error('A non-empty key is required.');
+      // A plaintext UTF-16 blob is 2 bytes per character; the OS refuses more than MAX_BLOB_BYTES.
+      if (key.length > MAX_KEY_CHARS) throw new Error('That key is too long for Windows Credential Manager.');
       await invoke('write', name, key);
     },
     /** Read a key, or `null` when the entry is absent (deleted outside the app). */
     async read(name) {
       const value = await invoke('read', name);
       return value.length === 0 ? null : value;
+    },
+    /**
+     * Write a key and read it back; every credential store does this check on first use.
+     * @param {string} name
+     * @param {string} key
+     */
+    async writeVerified(name, key) {
+      await this.write(name, key);
+      if ((await this.read(name)) !== key) throw new Error('The credential store did not return the key it stored.');
     },
     /** Delete an entry; `false` when it did not exist. */
     async delete(name) {
@@ -148,6 +168,11 @@ export function createMemorySecretStore() {
     async write(name, key) {
       if (typeof key !== 'string' || key.length === 0) throw new Error('A non-empty key is required.');
       entries.set(name, key);
+    },
+    /** @param {string} name @param {string} key */
+    async writeVerified(name, key) {
+      await this.write(name, key);
+      if ((await this.read(name)) !== key) throw new Error('The credential store did not return the key it stored.');
     },
     /** @param {string} name @returns {Promise<string | null>} */
     async read(name) {

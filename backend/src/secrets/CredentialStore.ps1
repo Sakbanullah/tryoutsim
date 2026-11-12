@@ -112,7 +112,8 @@ switch ($Command) {
     $chars = [System.Collections.Generic.List[char]]::new()
     $reader = [System.IO.StreamReader]::new([Console]::OpenStandardInput(), [System.Text.UTF8Encoding]::new($false))
     $buffer = [char[]]::new(4096)
-    while (($n = $reader.Read($buffer, 0, $buffer.Length)) -gt 0) { $chars.AddRange($buffer[0..($n - 1)]) }
+    # No slicing here: `$buffer[0..($n-1)]` is an Object[] for a one-character read and `AddRange` refuses it.
+    while (($n = $reader.Read($buffer, 0, $buffer.Length)) -gt 0) { for ($i = 0; $i -lt $n; $i++) { $chars.Add($buffer[$i]) } }
     $secret = -join $chars
     try {
       if ([string]::IsNullOrEmpty($secret)) { throw 'Empty secret on stdin.' }

@@ -2,10 +2,9 @@
 #
 # The script's own parameters and statements run — not a restatement of them:
 #   Invoke-SuperuserSql    -> the double in Double.ps1 (nothing reaches psql or PostgreSQL);
-#   Get-SuperuserPassword  -> removed; the scenario supplies the password the prompt would read,
-#                             through the $TestPlain variable the test file defines;
-#   TryoutSimCredInvoke    -> the double in Double.ps1 (CredentialStore.ps1 is not loaded);
-#   Local host access      -> the scenario's temporary directory, deleted afterwards.
+#   Get-SuperuserPassword  -> replaced; the scenario supplies the password the console prompt
+#                             would read, through the $TestSecure value the scenario builds;
+#   File locations         -> $Work: the scenario's temporary directory, deleted afterwards.
 #
 # The generated text is written to a test file and run with & (call), so those variables,
 # whose scope encloses the test file, are visible to it.
@@ -42,11 +41,17 @@ function Get-ScenarioScriptText {
   foreach ($statement in $ast.EndBlock.Statements) {
     if ($statement.GetType().Name -eq 'FunctionDefinitionAst') { continue }
     $text = & $source $statement
-    # ProvisioningCommon.ps1 and the script location are supplied by the test file.
-    if ($text -match 'ProvisioningCommon\.ps1|CredentialStore\.ps1') { continue }
-    # The console prompt is replaced by the password the test supplies.
-    if ($text -match 'Get-SuperuserPassword') { [void]$out.Append('$plain = $TestPlain' + $end); continue }
-    if ($text -match 'Get-SecureStringText|^\$ErrorActionPreference') { continue }
+    # ProvisioningCommon.ps1 is supplied by the test file.
+    if ($text -match '\. \(Join-Path \$PSScriptRoot ''ProvisioningCommon') { continue }
+    # The environment file is the scenario's own; the scripts' default path is replaced, not
+    # dropped, so the binding stays: `-EnvFile` still wins over it.
+    if ($text -match 'Get-DefaultEnvPath') {
+      $text = $text -replace 'Get-DefaultEnvPath', '$EnvPath'
+    }
+    # The console prompt is replaced by the password the test supplies, through the real
+    # Get-SecureStringText path and the statement's own empty check.
+    $text = $text -replace 'Get-SecureStringText \(Get-SuperuserPassword\)', 'Get-SecureStringText $TestSecure'
+    if ($text -match '^\$ErrorActionPreference') { continue }
     [void]$out.Append($text + $end)
   }
   return $out.ToString()
@@ -56,21 +61,23 @@ function Invoke-ProvisioningScenario {
   <#
     Run one script against the doubles.
 
-    @param Script   'Provision.ps1' | 'Make-Env.ps1' | 'Reset-Password.ps1'
-    @param Bound    @{ Name = value } for the parameters the script declares
-    @param Psql     It.Psql entries
-    @param StdIn    the superuser password ('' = the prompt returns nothing)
-    @param CredMode 'ok' | 'readfail' | 'writefail' | 'deletefail'
-    @param Store    the fake credential store's initial contents
-    @returns @{ Threw; Message; Output; Calls; Store; Writes; Work }
+    @param Script    'Provision.ps1' | 'Reset-Password.ps1' | 'Set-Secret.ps1' | 'Load-Env.ps1'
+    @param Bound     @{ Name = value } for the parameters the script declares
+    @param Psql      It.Psql entries
+    @param StdIn     the superuser password the console prompt would read ('' = empty)
+    @param EnvLines  the environment file's existing lines, written before the run
+    @param RoleConnection  '' = the server accepts the file's password, 'fail' = it rejects it
+    @param RejectedUrls    the URLs whose password the server rejects (all others accepted)
+    @returns @{ Threw; Message; Output; Calls; Work; EnvPath; EnvText }
   #>
   param(
     [Parameter(Mandatory = $true)][string]$Script,
     [hashtable]$Bound = @{},
     [object[]]$Psql = @(),
     [string]$StdIn = 'superuser-secret',
-    [string]$CredMode = 'ok',
-    [hashtable]$Store = @{}
+    [string[]]$EnvLines = @(),
+    [string]$RoleConnection = '',
+    [string[]]$RejectedUrls = @()
   )
 
   $path = Join-Path $script:DbDir $Script
@@ -80,32 +87,62 @@ function Invoke-ProvisioningScenario {
   $parameterNames = @()
   if ($block) { $parameterNames = @($block.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) }
 
-  # The generated block reads $TestPlain and $DbDir from the frame that runs it.
-  $TestPlain = $StdIn
-  $It = New-Object System.Collections.Hashtable
-  $It.Psql = $Psql
-  $It.Stdin = $StdIn
-  $It.CredMode = $CredMode
-  $It.Store = $Store.Clone()
-  $It.Calls = New-Object System.Collections.ArrayList
-  $It.Writes = 0
+  # The generated block reads $TestSecure and $DbDir from the frame that runs it.
+  $Work = Join-Path ([System.IO.Path]::GetTempPath()) ('tryoutsim-test-' + [guid]::NewGuid().ToString('n'))
+  New-Item -ItemType Directory -Path $Work | Out-Null
+  # The console prompt's answer, as the SecureString Read-Host -AsSecureString would return.
+  $TestSecure = New-Object System.Security.SecureString
+  foreach ($character in $StdIn.ToCharArray()) { $TestSecure.AppendChar($character) }
+  $TestSecure.MakeReadOnly()
+  # The environment file: whatever the test wants to find there, PORT when it says nothing.
+  # Each scenario directory holds its own Git repository that ignores .env, so the scripts'
+  # "Git must ignore the file" check exercises its real command without this repository's state.
+  $EnvPath = Join-Path $Work '.env'
+  [System.IO.File]::WriteAllText((Join-Path $Work '.gitignore'), ".env`n")
+  & git -C $Work init -q 2>$null | Out-Null
+  if ($EnvLines.Count -eq 0) { $EnvLines = @('NODE_ENV=development', 'DATABASE_URL_APP=', 'DATABASE_URL=', 'PORT=4317') }
+  [System.IO.File]::WriteAllLines($EnvPath, @('# scenario environment') + $EnvLines)
 
-  $work = Join-Path ([System.IO.Path]::GetTempPath()) ('tryoutsim-test-' + [guid]::NewGuid().ToString('n'))
-  New-Item -ItemType Directory -Path $work | Out-Null
+  # Owner-only, as the real file must be before any script reads it.
+  $security = New-Object System.Security.AccessControl.FileSecurity
+  $security.SetAccessRuleProtection($true, $false)
+  $security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+    [System.Security.Principal.WindowsIdentity]::GetCurrent().Name, 'FullControl', 'Allow')))
+  Set-Acl -LiteralPath $EnvPath -AclObject $security
+  # The double's state is global: every dot-sourced file and every generated script block sees it.
+  $global:TryoutSimIt = New-Object System.Collections.Hashtable
+  $global:TryoutSimIt.Psql = $Psql
+  $global:TryoutSimIt.Stdin = $StdIn
+  $global:TryoutSimIt.Calls = New-Object System.Collections.ArrayList
+  $global:TryoutSimIt.RoleConnection = $RoleConnection
+  $global:TryoutSimIt.RejectedUrls = $RejectedUrls
+
+  # The generated script looks at $Work for its file paths (the environment file, $urlDatabase).
   $splat = @{}
-  foreach ($name in $parameterNames) { if ($Bound.ContainsKey($name)) { $splat[$name] = $Bound[$name] } }
+  foreach ($name in $parameterNames) {
+    if (-not $Bound.ContainsKey($name)) { continue }
+    # A script block is a value the test computes in its own frame (the scenario directory).
+    $value = $Bound[$name]
+    if ($value -is [scriptblock]) { $value = & $value }
+    $splat[$name] = $value
+  }
 
-  # Parsed in memory and run as a block, so $TestPlain, $DbDir and $It resolve in the frames
+  # Parsed in memory and run as a block, so $TestSecure, $DbDir and $It resolve in the frames
   # this function and the test file define, and nothing is written for the script to read.
   # The parameter block must lead: with a statement before it, a list whose defaults hold a
   # comma is read as an expression. The caller binds every parameter, so nothing is defaulted.
   $text = (Get-ScenarioScriptText -Path $path).Replace("`r`n", "`n").TrimStart()
   $text = [regex]::Replace($text, '^param\(\s*', 'param(')
+  # Invoke-SuperuserSql reads the connection settings from the calling script's scope; this
+  # block replaces that script, so it sets them the way the scripts themselves do.
+  $script:SuperuserConnection = @{ SuperUser = $splat['SuperUser']; HostName = $splat['HostName']; Port = $splat['Port']; PsqlPath = $splat['PsqlPath'] }
   $threw = $null
   $output = ''
-  Push-Location -LiteralPath $work
+  Push-Location -LiteralPath $Work
   try {
-    $output = (& ([scriptblock]::Create($text)) @splat 2>&1 | Out-String)
+    # *>&1, not 2>&1: Write-Host writes to the host stream, which 2>&1 does not capture in
+    # Windows PowerShell 5.1, and the scenarios assert on those progress lines.
+    $output = (& ([scriptblock]::Create($text)) @splat *>&1 | Out-String)
   } catch {
     $threw = $_
     $output = "$output`n$($_ | Out-String)"
@@ -118,10 +155,10 @@ function Invoke-ProvisioningScenario {
     Threw = $threw
     Message = $(if ($threw) { $threw.Exception.Message } else { '' })
     Output = $output
-    Calls = @($script:It.Calls)
-    Store = $script:It.Store.Clone()
-    Writes = $script:It.Writes
-    Work = $work
+    Calls = @($global:TryoutSimIt.Calls)
+    Work = $Work
+    EnvPath = $EnvPath
+    EnvText = $(if (Test-Path -LiteralPath $EnvPath) { [System.IO.File]::ReadAllText($EnvPath) } else { $null })
   }
 }
 

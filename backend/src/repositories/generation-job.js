@@ -163,8 +163,18 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       await prisma.generationJob.update({ where: { id: jobId }, data: { status: 'running' } });
 
       const competencyIds = JSON.parse(job.competencyIdsJson);
-      const sizes = planBatches({ count: job.count, maxContext: readCapability(provider, 'maxContext') ?? null });
-      const competency = await seams.loadCompetency(competencyIds[0]);
+      const maxContext = readCapability(provider, 'maxContext');
+      const sizes = planBatches({ count: job.count, maxContext: maxContext ?? null });
+      // `competencyIds` is a set, not a queue: each batch is assigned an id round-robin, so a job that names several
+      // leaves spreads its count across all of them. Before AUD-96 every batch reused `competencyIds[0]`, and a
+      // multi-leaf job produced questions for its first leaf only.
+      /** @type {Map<string, object>} */
+      const competencies = new Map();
+      const competencyFor = async (index) => {
+        const id = /** @type {string} */ (competencyIds[index % competencyIds.length]);
+        if (!competencies.has(id)) competencies.set(id, await seams.loadCompetency(id));
+        return competencies.get(id);
+      };
 
       // A row exists only for a decided batch, so the batch that still needs a run is the lowest planned index with
       // no row. `failed` waits for an explicit retry (§3); a retry deletes those rows, which puts them back here.
@@ -172,12 +182,66 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       for (let index = 0; index < sizes.length; index += 1) {
         if (existing.has(index)) continue;
         const batch = { id: `${jobId}-b${index + 1}` };
-        await runBatch({ job, batch, transport, size: sizes[index] ?? 1, competency, competencyId: competency.id });
+        const competency = await competencyFor(index);
+        await runBatch({ job, batch, transport, size: sizes[index] ?? 1, competency, competencyId: competency.competencyId });
       }
       await finalise(jobId, sizes.length);
+    } catch (error) {
+      // A crash outside a batch's own failure handling (a write, a seam) must leave the job retryable, not `running`
+      // forever: no batch row exists for the batch in flight, and `retry`/restart both need a terminal status.
+      await markFailed(jobId, error);
+      throw error;
     } finally {
       active.delete(jobId);
     }
+  }
+
+  /**
+   * Close a job whose run threw outside a batch: the in-flight batch gets a `failed` row, and the job becomes `failed`
+   * when nothing was produced, `completed` (partial) otherwise. Never overwrites a job another path already closed.
+   * @param {string} jobId
+   * @param {unknown} error the cause, scrubbed into the batch's `rawResponseRef`
+   */
+  async function markFailed(jobId, error) {
+    const job = await prisma.generationJob.findUnique({ where: { id: jobId } });
+    if (job === null || !['running', 'queued'].includes(job.status)) return;
+    const planned = planBatches({ count: job.count, maxContext: null }).length;
+    const batches = await prisma.generationBatch.findMany({ where: { jobId } });
+    const open = planned - batches.length;
+    const reason = scrub(error instanceof Error ? error.message : String(error)).slice(0, RAW_RESPONSE_LIMIT);
+    if (open > 0) {
+      await upsertDecidedBatch(prisma, {
+        id: `${jobId}-b${batches.length + 1}`, jobId, status: 'failed',
+        // Not a provider failure: the runner's own write/seam threw. Kept inside the canonical id set
+        // (QUESTION_GENERATION §6); the scrubbed cause says what actually happened.
+        failureCategory: 'provider_error', rawResponseRef: reason, draftQuestionIds: '[]',
+      });
+    }
+    const decided = await prisma.generationBatch.findMany({ where: { jobId } });
+    const aggregate = aggregateJob(
+      decided.map((batch) => ({
+        status: batch.status,
+        produced: JSON.parse(batch.draftQuestionIds).length,
+        quarantined: 0,
+      })),
+    );
+    await prisma.$transaction(async (tx) => {
+      await tx.generationJob.update({
+        where: { id: jobId },
+        data: {
+          status: aggregate.status,
+          producedCount: aggregate.produced,
+          quarantinedCount: aggregate.quarantined,
+          partial: aggregate.partial ? 1 : 0,
+        },
+      });
+      await raise({
+        database: tx,
+        type: aggregate.status === 'completed' ? 'generation_completed' : 'generation_failed',
+        entityId: jobId,
+        params: { jobId, produced: aggregate.produced, batches: decided.length },
+      });
+    });
   }
 
   /**
@@ -212,7 +276,7 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
         });
         return;
       }
-      batchDone = { questions };
+      batchDone = { questions: questions.slice(0, size) };
     } catch (error) {
       raw = raw ?? scrub(error instanceof Error ? error.message : String(error)).slice(0, RAW_RESPONSE_LIMIT);
       await upsertDecidedBatch(prisma, {
@@ -222,19 +286,29 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
       return;
     }
 
-    // All of the batch's drafts and its row, or none (GENERATION_JOBS §4).
-    await prisma.$transaction(async (tx) => {
-      /** @type {string[]} */
-      const draftIds = [];
-      for (const { index, question } of batchDone.questions) {
-        const questionId = await seams.insertDraft(tx, { jobId: job.id, batchId: batch.id, question, competencyId, index });
-        if (questionId !== null) draftIds.push(questionId);
-      }
-      await upsertDecidedBatch(tx, {
-        id: batch.id, jobId: job.id, status: 'completed', failureCategory: null,
-        rawResponseRef: raw, draftQuestionIds: JSON.stringify(draftIds),
+    // All of the batch's drafts and its row, or none (GENERATION_JOBS §4). A write that throws is the batch's own
+    // failure, decided in the same path as a bad response — a crash here must not escape to the job runner.
+    try {
+      await prisma.$transaction(async (tx) => {
+        /** @type {string[]} */
+        const draftIds = [];
+        for (const { index, question } of batchDone.questions) {
+          // The batch runs on one competency, so every question in it carries that competency's id.
+          const questionId = await seams.insertDraft(tx, { jobId: job.id, batchId: batch.id, question, competencyId: competency.competencyId, index });
+          if (questionId !== null) draftIds.push(questionId);
+        }
+        await upsertDecidedBatch(tx, {
+          id: batch.id, jobId: job.id, status: 'completed', failureCategory: null,
+          rawResponseRef: raw, draftQuestionIds: JSON.stringify(draftIds),
+        });
       });
-    });
+    } catch (error) {
+      const cause = scrub(error instanceof Error ? error.message : String(error)).slice(0, RAW_RESPONSE_LIMIT);
+      await upsertDecidedBatch(prisma, {
+        id: batch.id, jobId: job.id, status: 'failed',
+        failureCategory: failureCategoryForError(error), rawResponseRef: cause, draftQuestionIds: '[]',
+      });
+    }
   }
 
   /**

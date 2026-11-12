@@ -4,19 +4,21 @@
 # every function it defines is replaced by a double. The doubles answer from:
 #   It.Psql     - entries of @{ Sql = '<regex>'; Rows = @(..) | Throw = '<message>' }, answered
 #                 in order, so a test both returns rows and asserts a statement was issued;
-#   It.Stdin    - the superuser password the console prompt would have returned;
-#   It.CredMode - 'ok', or a store that refuses reads / writes / deletes the way Win32 does.
-# Nothing here touches PostgreSQL, psql or Windows Credential Manager. CredentialStore.ps1 is
-# not loaded; the scripts reach the store only through TryoutSimCredInvoke, which is what this
-# file replaces, and a store failure is worded exactly as the real one words it.
+#   It.Stdin    - the superuser password the console prompt would have returned.
+# Nothing here touches PostgreSQL or psql, and no credential store is involved: the two role
+# passwords live in the scenario's own environment file.
 
-$script:It = @{
+# One global record per run: Double.ps1, Scenario.ps1 and each generated script block all read
+# it, and a function's own script scope is not the one the test file writes to.
+$global:TryoutSimIt = @{
   Stdin = ''
   Psql = @()
-  CredMode = 'ok'
   Calls = New-Object System.Collections.ArrayList
-  Store = @{}
-  Writes = 0
+  # What the role-connection check answers; '' means "as the server would": every role accepts
+  # the file's password. 'fail' rejects all of them; otherwise each URL named in RejectedUrls is
+  # rejected and every other one accepted, which is how a run that resets a password looks.
+  RoleConnection = ''
+  RejectedUrls = @()
 }
 
 # --- The psql double -----------------------------------------------------------------------
@@ -33,9 +35,19 @@ function Invoke-SuperuserSql {
   if ([string]::IsNullOrEmpty($env:PGPASSWORD)) {
     throw 'The superuser password is not in PGPASSWORD. This is a preflight failure; no statement was run.'
   }
-  if ([string]::IsNullOrEmpty($SuperUser)) { throw 'The superuser name is not set. This is a preflight failure.' }
-  [void]$script:It.Calls.Add($Sql)
-  foreach ($entry in @($script:It.Psql)) {
+  # Mirrors the real helper: callers pass only -Sql and the connection settings live in the
+  # script scope (the scenario sets them where the script it runs expects them).
+  if ($null -eq $script:SuperuserConnection -and [string]::IsNullOrEmpty($SuperUser)) {
+    throw 'The psql connection settings are not set. This is a preflight failure; no statement was run.'
+  }
+  if ($null -ne $script:SuperuserConnection) {
+    $SuperUser = $script:SuperuserConnection.SuperUser
+  }
+  if ([string]::IsNullOrEmpty($SuperUser)) {
+    throw 'The superuser name is not set. This is a preflight failure.'
+  }
+  [void]$global:TryoutSimIt.Calls.Add($Sql)
+  foreach ($entry in @($global:TryoutSimIt.Psql)) {
     if ($null -eq $entry) { continue }
     if ($entry.Sql -and ($Sql -notmatch $entry.Sql)) { continue }
     if ($entry.Throw) { throw "psql exited with code 1. $($entry.Throw)" }
@@ -43,6 +55,19 @@ function Invoke-SuperuserSql {
     return @()
   }
   return @()
+}
+
+function Test-RoleConnection {
+  <#
+    The role-authentication probe, without a server: the scenario says whether the URL in the
+    file is accepted. Nothing here opens a connection.
+  #>
+  param([string]$Url, [string]$PsqlPath)
+  if ([string]::IsNullOrEmpty($Url)) { return $false }
+  [void]$global:TryoutSimIt.Calls.Add("AUTH $Url")
+  if ($global:TryoutSimIt.RoleConnection -eq 'fail') { return $false }
+  if (@($global:TryoutSimIt.RejectedUrls) -contains $Url) { return $false }
+  return $true
 }
 
 function Resolve-PsqlPath {
@@ -54,11 +79,11 @@ function Resolve-PsqlPath {
 
 function Get-SuperuserPassword {
   <# The superuser password the test supplies, instead of the console prompt. #>
-  if ([string]::IsNullOrEmpty($script:It.Stdin)) {
-    throw 'The superuser password read from stdin is empty. Provisioning stopped before any statement ran.'
+  if ([string]::IsNullOrEmpty($global:TryoutSimIt.Stdin)) {
+    throw 'The superuser password read from the console is empty. Provisioning stopped before any statement ran.'
   }
   $secure = New-Object System.Security.SecureString
-  foreach ($character in $script:It.Stdin.ToCharArray()) { $secure.AppendChar($character) }
+  foreach ($character in $global:TryoutSimIt.Stdin.ToCharArray()) { $secure.AppendChar($character) }
   $secure.MakeReadOnly()
   return $secure
 }
@@ -73,49 +98,5 @@ function Get-SecureStringText {
     return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
   } finally {
     if ($bstr -ne [IntPtr]::Zero) { [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-  }
-}
-
-# --- The credential-store double -----------------------------------------------------------
-
-function New-CredStoreFailure([int]$NativeError, [string]$Message) {
-  <# A store failure worded the way CredentialStore.ps1 words it, raised with Win32Error. #>
-  $exception = New-Object System.Exception "Could not access the credential store (Win32 error $NativeError). $Message"
-  return @{ Exception = $exception; Win32Error = $NativeError; ErrorCode = 'CredentialStoreFailed' }
-}
-
-function TryoutSimCredInvoke {
-  <#
-    The scripts' only door to the credential store. Each operation reads It.CredMode at call
-    time, so a test switches the store's health between runs without reloading anything.
-  #>
-  param([string]$Operation, [string]$Target, [string]$User = '', [string]$Secret = '')
-
-  $fail = {
-    param($code, $message, $win32)
-    $exception = New-Object System.Exception "Could not access the credential store (Win32 error $win32). $message"
-    $exception.Data['ErrorCode'] = $code
-    $exception.Data['NativeErrorCode'] = $win32
-    return $exception
-  }
-
-  switch ($Operation) {
-    'Write' {
-      if ($script:It.CredMode -eq 'writefail') { throw (& $fail 'CredentialStoreFailed' 'The parameter is incorrect.' 1312) }
-      $script:It.Writes++
-      $script:It.Store[$Target] = $Secret
-      return $null
-    }
-    'Read' {
-      if ($script:It.CredMode -eq 'readfail') { throw (& $fail 'CredentialStoreFailed' 'Access is denied.' 5) }
-      if ($script:It.Store.ContainsKey($Target)) { return $script:It.Store[$Target] }
-      return $null
-    }
-    'Delete' {
-      if ($script:It.CredMode -eq 'deletefail') { throw (& $fail 'CredentialStoreFailed' 'Access is denied.' 5) }
-      $script:It.Store.Remove($Target)
-      return $null
-    }
-    default { throw "Unknown credential-store operation '$Operation'." }
   }
 }

@@ -84,6 +84,13 @@ The **server** is installed separately; the app does not install PostgreSQL.
 - Neither role is created by the app; provisioning is always manual.
 - The exact role/database names and the credential storage location are implementation details
   recorded at Gate 3; this section fixes only that provisioning is manual once and outside backups.
+- **The role passwords live in one file, `.env` at the repository root** (Decision 2026-11-11). It
+  is covered by `.gitignore`, must be readable by the current Windows account alone, holds
+  `DATABASE_URL` (migrator) and `DATABASE_URL_APP` (app), and never the superuser password — the
+  provisioning script reads that from the console without echo. The serving process reads only
+  `DATABASE_URL_APP`. Windows Credential Manager is not used for these credentials; the AI
+  provider keys remain in the OS credential store ([SECRETS.md](../backend/SECRETS.md) §2).
+  Steps: [backend/db/README.md](../../backend/db/README.md).
 
 ## 2. Backup
 

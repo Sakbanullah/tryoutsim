@@ -91,6 +91,11 @@ async function main() {
     const kind = platformStoreKind();
     if (!STORE_KINDS.includes(kind)) throw new Error(`This platform's secret store (${kind}) is not one of the schema's store kinds.`);
     secretStore = kind === 'windows_credential_manager' ? createWindowsCredentialStore() : createMemorySecretStore();
+    // Prove the store works now, not at the first provider write: a broken helper leaves every other route
+    // on the memory store, which would lose a key on the next restart.
+    const probeKey = 'tryoutsim-store-probe';
+    await secretStore.writeVerified(`tryoutsim/probe-${process.pid}`, probeKey);
+    await secretStore.delete(`tryoutsim/probe-${process.pid}`);
   } catch (error) {
     console.error(JSON.stringify({
       level: 'warn', event: 'secret_store_unavailable',
@@ -99,6 +104,20 @@ async function main() {
     secretStore = createMemorySecretStore();
   }
   const ai = createAiServices({ prisma, secretStore, installId: defaultInstallId() });
+
+  // GENERATION_JOBS §5: reconcile jobs a previous process left `queued`/`running` before reporting ready. The service
+  // owns this call; without it a crashed job stays `running` forever and cannot be retried.
+  try {
+    const inspection = await ai.generation.inspectOnStart();
+    if (inspection.resumed.length > 0 || inspection.interrupted.length > 0) {
+      console.log(JSON.stringify({ level: 'info', event: 'generation_inspected', ...inspection }));
+    }
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: 'warn', event: 'generation_inspection_failed',
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  }
 
   const router = buildRouter({ pool, prisma, providerStore: ai.providerStore, generation: ai.generation });
   const server = createHttpServer({ router });
