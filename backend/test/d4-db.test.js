@@ -103,7 +103,7 @@ test('generation: batches, partial output and the report', { skip: !process.env.
       capabilityFlagsJson: JSON.stringify({ maxContext: { value: 2500, source: 'manual' } }),
     },
   });
-  await saveRouting(prisma, { default: { providerId: provider.id, modelId: 'm' }, perTask: {} });
+  await saveRouting(prisma, { default: { providerId: provider.id, modelId: 'm' } });
 
   /** @type {{tx: any, input: any}[]} */
   let inserted = [];
