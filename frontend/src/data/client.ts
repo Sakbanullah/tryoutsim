@@ -122,6 +122,7 @@ export type ApiClient = {
     retries: number
   }): Promise<Result<ProviderView>>
   updateProvider(id: string, body: { baseUrl?: string; timeoutMs?: number; defaultModel?: string }): Promise<Result<ProviderView>>
+  /** `DELETE /providers/:id` — 204; the row and its credential are gone. */
   deleteProvider(id: string): Promise<Result<null>>
   /** `POST /providers/:id/test` — a failed test is a 200 with `ok: false` and the registry code of the failure. */
   testProvider(id: string, modelId?: string): Promise<Result<ProviderTestResult>>
