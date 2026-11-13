@@ -99,6 +99,29 @@ export type ProvisionalApproval = {
   acknowledgedWarnings: string[]
 }
 
+/**
+ * Why a `200` result carries no verdict (API_SPECIFICATION §4, FRONTEND_DATA_CONTRACTS §5): a verdict-only code,
+ * never an HTTP error. `changed` is empty only for `APPROVAL_MISSING`. This is the shape the backend stores
+ * (`score_result.verdictWithheldJson`, built by `domain/approval.js` `evaluateApproval`).
+ */
+export type VerdictWithheld = {
+  code: 'APPROVAL_MISSING' | 'APPROVAL_INVALID' | 'APPROVAL_VERSION_MISMATCH'
+  changed: ChangeEntry[]
+}
+
+/**
+ * The result of a threshold rule that does apply (SCORING_METHODOLOGY §5.4). It is the backend's `verdict` field,
+ * carried only with a valid approval; `verdict: null` means no verdict exists at all.
+ */
+export type ThresholdVerdict = {
+  mode: 'per_subtest_only' | 'total_only' | 'per_subtest_and_total'
+  passed: boolean
+  passesBySubtest?: Record<Test, boolean>
+  basisTier: EvidenceTier
+  basisPathway?: 'CPNS' | 'SEKOLAH_KEDINASAN'
+  noticeRequired: boolean
+}
+
 export type ThresholdEvaluation =
   | { mode: 'none' }
   | {
@@ -122,6 +145,10 @@ export type ScoreResult = {
   byCompetency: Record<string, Bucket>
   byQuestion: QuestionScore[]
   thresholds: ThresholdEvaluation
+  /** The threshold verdict, or `null` when none exists (no thresholds, or a withheld verdict). */
+  verdict: ThresholdVerdict | null
+  /** Why the verdict is absent when a verdict-only code applied; `null` otherwise (API_SPECIFICATION §4). */
+  withheld: VerdictWithheld | null
 }
 
 export type SessionScoreResult = ScoreResult & { bucketUnit: 'points' }
@@ -315,15 +342,8 @@ export type SessionStatus = 'open' | 'submitted' | 'scored'
 export type Outcome<T> =
   | { kind: 'ok'; data: T }
   | { kind: 'validation'; fields: FieldError[] }
-  | {
-      kind: 'blocked'
-      code:
-        | 'APPROVAL_MISSING'
-        | 'APPROVAL_INVALID'
-        | 'APPROVAL_VERSION_MISMATCH'
-        | 'THRESHOLD_CONFIG_INVALID'
-      changed: ChangeEntry[]
-    }
+  /** A genuine block: nothing was scored. A withheld verdict is a `200`, never this. */
+  | { kind: 'blocked'; code: 'THRESHOLD_CONFIG_INVALID'; changed: ChangeEntry[] }
   | { kind: 'preflight'; errors: PreflightError[] }
   | { kind: 'contract'; expected: string; actual: string }
   | { kind: 'provider'; code: ErrorCode; message: string }
@@ -425,14 +445,6 @@ export type ProviderView = Provider & {
 export type ProviderTestResult =
   | { ok: true; latencyMs: number; detected?: unknown }
   | { ok: false; latencyMs: number; reason?: string; code?: string }
-
-/** GAP-M8 — task→model map. */
-export type TaskId = 'question' | 'explanation' | 'material' | 'analysis'
-export type TaskMapEntry = { task: TaskId; providerId: string | null; modelId: string | null }
-export type TaskMapUpdate = {
-  tasks: TaskMapEntry[]
-  capabilityFlags: { jsonMode: boolean; streaming: boolean; maxContext: number | null }
-}
 
 /** GAP-M9 — ConfigSummary used by blocked states. */
 export type ConfigSummary = {
@@ -588,10 +600,11 @@ export type ModelCapabilities = {
   maxContext: CapabilityFlag<number | null>
 }
 
-/** `GET /ai-routing` — AI_PROVIDER_ARCHITECTURE §4. */
+/**
+ * `GET /ai-routing` — AI_PROVIDER_ARCHITECTURE §4. One global model for every AI task; there is no per-task route.
+ */
 export type AiRouting = {
   default: { providerId: string | null; modelId: string | null }
-  perTask: TaskMapEntry[]
 }
 
 /** `GET /notifications` — NOTIFICATION_SPECIFICATION §3. */

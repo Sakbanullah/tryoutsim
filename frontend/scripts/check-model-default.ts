@@ -14,8 +14,14 @@ const client = readFileSync(new URL('../src/data/client.ts', import.meta.url), '
 const mock = readFileSync(new URL('../src/mock/mockClient.ts', import.meta.url), 'utf8')
 
 check(/updateProvider\(provider\.id, \{ defaultModel: modelId \}\)/.test(settings), 'a listed model is saved as the default')
-check(settings.includes('Jadikan default'), 'the list offers the action')
-check(/m === provider\.defaultModel/.test(settings), 'the current default is marked in the list')
+check(/api\.saveRouting\(\{ default: \{ providerId: provider\.id, modelId \} \}\)/.test(settings), 'the chosen model also becomes the one global model')
+check(/updateProvider\(provider\.id, \{ defaultModel: modelId \}\)[\s\S]*saveRouting/.test(settings), 'the provider is saved before the global default, so no untested pair is routed')
+// The long per-row list became a searchable picker; choosing a row is what sets the default now.
+const picker = readFileSync(new URL('../src/features/lainnya/ModelPicker.tsx', import.meta.url), 'utf8')
+check(picker.includes("role=\"option\""), 'the picker lists the models as options')
+check(/aria-selected=\{m === selected\}/.test(picker), 'the current default is marked in the picker')
+check(/placeholder=\{selected \?\? 'Pilih model'\}/.test(picker), 'with no default the picker says "Pilih model"')
+check(settings.includes('<ModelPicker'), 'the card renders the picker')
 check(/label="Model default"/.test(settings), 'the typed model field stays available')
 check(/defaultModel\?: string/.test(client), 'the client patch can carry a model')
 check(/body\.defaultModel !== undefined\) provider\.testedAt = null/.test(mock), 'the mock clears the test record when the model changes')

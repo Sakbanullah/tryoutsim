@@ -66,13 +66,23 @@ function conflictText(reason: string): string {
     case 'not_provisional':
       return 'Hanya konfigurasi sementara yang memerlukan persetujuan.'
     case 'not_open':
+    case 'session_not_open':
       return 'Sesi sudah tidak terbuka.'
+    case 'not_scored':
+      return 'Sesi ini belum dinilai, jadi belum ada hasil.'
+    case 'not_submitted':
+      return 'Sesi ini belum dikirim, jadi belum ada hasil.'
     case 'not_startable':
       return 'Paket ini belum bisa dimulai.'
     case 'package_retired':
       return 'Paket ini sudah dipensiunkan.'
+    case 'global_model_unset':
+      return 'Belum ada model AI global. Pilih satu model default di Pengaturan AI.'
+    case 'provider_missing':
+      return 'Penyedia model AI global sudah tidak ada. Pilih model lagi di Pengaturan AI.'
     case 'task_unmapped':
-      return 'Belum ada model untuk tugas ini. Atur di Pengaturan AI.'
+      // No route emits this any more; kept so a stale server is still explained rather than generic.
+      return 'Belum ada model AI global. Pilih satu model default di Pengaturan AI.'
     case 'provider_untested':
       return 'Uji koneksi penyedia dulu di Pengaturan AI.'
     case 'last_provider':

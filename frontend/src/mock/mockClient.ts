@@ -25,9 +25,9 @@ import type {
   SessionDetail,
   SessionScoreResult,
   SessionSummary,
-  TaskMapEntry,
   ThresholdEvaluation,
   TrendSeries,
+  VerdictWithheld,
 } from '../types/contracts'
 import type { ApiClient } from '../data/client'
 import type { Failure, Result } from '../data/errors'
@@ -116,12 +116,6 @@ const PROVIDERS: ProviderView[] = [
   },
 ]
 
-const TASK_MAP: TaskMapEntry[] = [
-  { task: 'question', providerId: 'local-mock', modelId: 'mock-model' },
-  { task: 'explanation', providerId: 'local-mock', modelId: 'mock-model' },
-  { task: 'material', providerId: null, modelId: null },
-  { task: 'analysis', providerId: 'local-mock', modelId: 'mock-model' },
-]
 const ROUTING_DEFAULT = { providerId: 'local-mock' as string | null, modelId: 'mock-model' as string | null }
 
 /** Prepends one in-app notification; the title is a catalogue key, never free text (§3). */
@@ -199,10 +193,22 @@ function thresholdsFor(configId: string): ThresholdEvaluation {
   }
 }
 
+/**
+ * The verdict-only reason a scored session carries (API_SPECIFICATION §4): a threshold rule applies but no valid
+ * approval authorises a verdict, so the result is a 200 with `verdict: null` and this `withheld` — never a 409.
+ */
+function withheldFor(config: ExamConfig | undefined, validApproval: ProvisionalApproval | null): VerdictWithheld | null {
+  const thresholds = thresholdsFor(config?.id ?? '')
+  if (thresholds.mode === 'none' || validApproval !== null) return null
+  return { code: 'APPROVAL_MISSING', changed: [] }
+}
+
 function score(session: Session): SessionScoreResult {
   const config = CONFIGS.find((c) => c.id === session.detail.configId)
   // An approval for an older config version is invalid and is not attached (ADR-004).
   const validApproval = approval && sameVersions(config, approval) ? approval : null
+  const thresholds = thresholdsFor(session.detail.configId)
+  const withheld = withheldFor(config, validApproval)
   const answers = [...session.answers].map(([questionId, selected]) => ({ questionId, selected }))
   return {
     ...buildScoreResult({
@@ -211,7 +217,10 @@ function score(session: Session): SessionScoreResult {
       configVersion: config?.configVersion ?? 1,
       scoringVersion: config?.scoringVersion ?? 1,
       approval: validApproval,
-      thresholds: thresholdsFor(session.detail.configId),
+      thresholds,
+      // The threshold evaluation is the verdict only when an approval authorises it (SCORING_METHODOLOGY §5.4).
+      verdict: validApproval !== null && thresholds.mode !== 'none' ? thresholds : null,
+      withheld,
       roster: rosterQuestions(),
       answers,
     }),
@@ -469,7 +478,9 @@ export const mockClient: ApiClient = {
     await wait()
     const session = sessions.get(id)
     if (!session) return fail(notFound('sesi'))
-    if (session.detail.status !== 'open') return fail(conflict('not_open'))
+    if (session.detail.status !== 'open') {
+      return fail(conflict(session.detail.status === 'submitted' || session.detail.status === 'scored' ? 'already_submitted' : 'session_not_open'))
+    }
     for (const a of patchToAnswers(body)) session.answers.set(a.questionId, a.selected)
     // Rule 2: an answer save pauses the clock; `wakeSession` resumes it.
     session.detail = { ...session.detail, runningSince: null }
@@ -480,7 +491,9 @@ export const mockClient: ApiClient = {
     await wait()
     const session = sessions.get(id)
     if (!session) return fail(notFound('sesi'))
-    if (session.detail.status !== 'open') return fail(conflict('not_open'))
+    if (session.detail.status !== 'open') {
+      return fail(conflict(session.detail.status === 'submitted' || session.detail.status === 'scored' ? 'already_submitted' : 'session_not_open'))
+    }
     const { activeMs, expired } = session.detail
     // Rule 3: resume from the stored `activeMs`. A seeded open session has no store; it resumes as-is.
     const resumed = expired ? { activeMs, runningSince: null as string | null } : { activeMs, runningSince: new Date().toISOString() }
@@ -492,7 +505,9 @@ export const mockClient: ApiClient = {
     await wait()
     const session = sessions.get(id)
     if (!session) return fail(notFound('sesi'))
-    if (session.detail.status !== 'open') return fail(conflict('already_submitted'))
+    if (session.detail.status !== 'open') {
+      return fail(conflict(session.detail.status === 'submitted' || session.detail.status === 'scored' ? 'already_submitted' : 'session_not_open'))
+    }
 
     const known = new Set(session.detail.questions.map((q) => q.questionId))
     const duplicates = patchToAnswers(body).filter((a) => !known.has(a.questionId))
@@ -538,10 +553,8 @@ export const mockClient: ApiClient = {
     if (!session) return fail(notFound('sesi'))
     if (session.detail.status === 'open') return fail(conflict('not_submitted'))
     if (session.detail.status === 'scored') return fail(conflict('not_resubmittable'))
-    const config = CONFIGS.find((c) => c.id === session.detail.configId)
-    if (config?.state === 'provisional' && approval === null) {
-      return fail({ status: 409, code: 'APPROVAL_MISSING', changed: [] })
-    }
+    // Rescoring never blocks on a missing approval: the score stands and only the verdict is withheld
+    // (SCORING_METHODOLOGY §5.6, §11; API_SPECIFICATION §4).
     session.result = score(session)
     session.blocked = undefined
     session.detail = { ...session.detail, status: 'scored' }
@@ -559,11 +572,18 @@ export const mockClient: ApiClient = {
     // The stored snapshot is scored once; an approval added afterwards fills the verdict slot only.
     if (session.result) {
       const config = CONFIGS.find((c) => c.id === session.detail.configId)
-      const valid = approval && sameVersions(config, approval)
-      return ok<ScoreResult>({ ...session.result, approval: valid ? approval : null })
+      const valid = approval && sameVersions(config, approval) ? approval : null
+      const thresholds = session.result.thresholds
+      return ok<ScoreResult>({
+        ...session.result,
+        approval: valid,
+        verdict: valid !== null && thresholds.mode !== 'none' ? thresholds : null,
+        withheld: withheldFor(config, valid),
+      })
     }
     if (session.blocked) return fail(session.blocked)
-    return fail({ status: 409, code: 'APPROVAL_MISSING', changed: [] })
+    // No stored result: the session was submitted without being scored — distinct from a withheld verdict.
+    return fail(conflict('not_scored'))
   },
 
   async reviewQuestions(id, ids) {
@@ -976,7 +996,8 @@ export const mockClient: ApiClient = {
     if (index === -1) return fail(notFound('penyedia'))
     if (PROVIDERS.length === 1) return fail(conflict('last_provider'))
     PROVIDERS.splice(index, 1)
-    for (const entry of TASK_MAP) if (entry.providerId === id) Object.assign(entry, { providerId: null, modelId: null })
+    // A provider that carried the global model leaves no model behind: clear it like the route's cascade does.
+    if (ROUTING_DEFAULT.providerId === id) ROUTING_DEFAULT.providerId = ROUTING_DEFAULT.modelId = null
     return ok(null)
   },
 
@@ -1005,19 +1026,18 @@ export const mockClient: ApiClient = {
 
   async routing(): Promise<Result<AiRouting>> {
     await wait()
-    return ok({ default: { ...ROUTING_DEFAULT }, perTask: TASK_MAP.map((t) => ({ ...t })) })
+    return ok({ default: { ...ROUTING_DEFAULT } })
   },
 
   async saveRouting(body) {
     await wait()
-    const unknown = body.perTask.find((t) => t.providerId !== null && !PROVIDERS.some((p) => p.id === t.providerId))
-    if (unknown) {
-      return fail({ status: 400, code: 'VALIDATION_FAILED', fields: [{ path: `perTask.${unknown.task}.providerId`, message: 'Penyedia tidak dikenal.', rule: 'exists' }] })
+    // One global model: a default that names an unknown provider is refused with the route's field path.
+    if (body.default.providerId !== null && !PROVIDERS.some((p) => p.id === body.default.providerId)) {
+      return fail({ status: 400, code: 'VALIDATION_FAILED', fields: [{ path: 'default.providerId', message: 'Penyedia tidak dikenal.', rule: 'exists' }] })
     }
     ROUTING_DEFAULT.providerId = body.default.providerId
     ROUTING_DEFAULT.modelId = body.default.modelId
-    TASK_MAP.splice(0, TASK_MAP.length, ...body.perTask)
-    return ok({ default: { ...ROUTING_DEFAULT }, perTask: TASK_MAP.map((t) => ({ ...t })) })
+    return ok({ default: { ...ROUTING_DEFAULT } })
   },
 
   // ── generation jobs ─────────────────────────────────────────────────────────────────────────────
