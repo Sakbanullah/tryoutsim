@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { api } from '../../data'
+import { useCallback, useState } from 'react'
+import { api, toOutcome } from '../../data'
 import type { ModelCapabilities, ProviderView } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
 import { useApi } from '../shared/useApi'
@@ -7,6 +7,7 @@ import { actionMessage, useAction } from '../shared/useAction'
 import { Badge, Button, Dialog, Field, Notice, Panel, Skeleton, controlClass } from '../../ui/ui'
 import { Block, PageHeader } from '../../ui/page'
 import { BackLink } from '../../shell/Layout'
+import { useFlash } from '../../state/shell'
 import { IconAlert, IconCheck, IconPlug, IconRefresh, IconSparkle } from '../../ui/icons'
 import { providerTestText } from './providerTestText'
 
@@ -28,6 +29,18 @@ export default function AiSettings() {
   const providers = useApi<ProviderView[]>(() => api.providers(), [])
   const [creating, setCreating] = useState(false)
   const reload = () => providers.retry()
+
+  /**
+   * Remove one provider from the loaded list after the server confirmed its deletion. Only that row goes, so the
+   * other cards keep their own state; no refetch is needed because `DELETE` returns 204.
+   */
+  const removeRow = useCallback(
+    (id: string) => {
+      if (providers.state.phase !== 'done' || providers.state.outcome.kind !== 'ok') return
+      providers.setData(providers.state.outcome.data.filter((p) => p.id !== id))
+    },
+    [providers],
+  )
 
   return (
     <div className="animate-rise space-y-6">
@@ -62,7 +75,7 @@ export default function AiSettings() {
                   Tambahkan penyedia model sebelum membuat soal dengan AI.
                 </Notice>
               ) : (
-                rows.map((p) => <ProviderCard key={p.id} provider={p} onChanged={reload} />)
+                rows.map((p) => <ProviderCard key={p.id} provider={p} onChanged={reload} onDeleted={removeRow} />)
               )
             }
           </OutcomeView>
@@ -85,16 +98,46 @@ function IconPlugin() {
 
 /* ── One provider ─────────────────────────────────────────────────────────────────────── */
 
-function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
+function ProviderCard({
+  provider,
+  onChanged,
+  onDeleted,
+}: {
+  provider: ProviderView
+  onChanged: () => void
+  onDeleted: (id: string) => void
+}) {
   const [config, setConfig] = useState({ baseUrl: provider.baseUrl, timeoutMs: provider.timeoutMs, defaultModel: provider.defaultModel ?? '' })
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null)
   const action = useAction()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const flash = useFlash()
   const dirty =
     config.baseUrl !== provider.baseUrl || config.timeoutMs !== provider.timeoutMs || config.defaultModel !== (provider.defaultModel ?? '')
   /** What goes to PATCH: the model only when it is typed, so an empty field is never written as a model. */
   const patch: { baseUrl: string; timeoutMs: number; defaultModel?: string } = { baseUrl: config.baseUrl, timeoutMs: config.timeoutMs }
   if (config.defaultModel.trim() !== '') patch.defaultModel = config.defaultModel.trim()
+
+  /**
+   * Delete this provider. `DELETE` answers 204 (no body), so the outcome is the confirmation; only then does the row
+   * leave the list. A second click is refused while one is in flight, and a failed delete keeps the row and says why.
+   */
+  async function removeProvider() {
+    if (deleting) return
+    setDeleting(true)
+    setDeleteError(null)
+    const res = await api.deleteProvider(provider.id)
+    setDeleting(false)
+    if (!res.ok) {
+      setDeleteError(actionMessage(toOutcome(res.failure)))
+      return
+    }
+    setConfirmDelete(false)
+    onDeleted(provider.id)
+    flash({ kind: 'info', text: `Penyedia ${provider.name} dihapus.` })
+  }
 
   /** Test the stored configuration. The key and the model come from the row, never from this form. */
   async function runTest() {
@@ -227,26 +270,21 @@ function ProviderCard({ provider, onChanged }: { provider: ProviderView; onChang
         onClose={() => setConfirmDelete(false)}
         footer={
           <>
-            <Button variant="quiet" onClick={() => setConfirmDelete(false)}>
+            <Button variant="quiet" onClick={() => setConfirmDelete(false)} disabled={deleting}>
               Batal
             </Button>
-            <Button
-              variant="danger"
-              disabled={action.busy}
-              onClick={async () => {
-                const done = await action.run(() => api.deleteProvider(provider.id))
-                if (done !== null) {
-                  setConfirmDelete(false)
-                  onChanged()
-                }
-              }}
-            >
-              Ya, hapus
+            <Button variant="danger" disabled={deleting} onClick={() => void removeProvider()}>
+              {deleting ? 'Menghapus…' : 'Ya, hapus'}
             </Button>
           </>
         }
       >
         <p>Provider ini akan dihapus dari pengaturan. Kunci yang tersimpan ikut dihapus dan tidak bisa dipulihkan.</p>
+        {deleteError ? (
+          <Notice tone="danger" className="mt-3" title="Penyedia belum terhapus">
+            {deleteError}
+          </Notice>
+        ) : null}
       </Dialog>
     </Panel>
   )

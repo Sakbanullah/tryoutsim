@@ -10,6 +10,7 @@
  *   5. faithful mocks: the same check shape is exercised against the mock client.
  */
 import { registerHooks } from 'node:module'
+import { readFileSync } from 'node:fs'
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -41,6 +42,10 @@ const check = (cond: unknown, message: string): asserts cond => {
 const removeRow = <T extends { id: string }>(rows: T[], id: string) => rows.filter((p) => p.id !== id)
 
 // 1/2. The filter the screen runs after a 2xx: one row leaves, the others stay in order.
+const settings = readFileSync(new URL('../src/features/lainnya/AiSettings.tsx', import.meta.url), 'utf8')
+check(/const removeRow = useCallback\(/.test(settings), 'the screen keeps a row filter')
+check(/providers\.setData\(providers\.state\.outcome\.data\.filter\(\(p\) => p\.id !== id\)\)/.test(settings), 'the filter removes only the deleted id')
+check(/onDeleted=\{removeRow\}/.test(settings), 'the card reports a confirmed delete to the list')
 const rows = [
   { id: 'prov-1', name: 'Satu' },
   { id: 'prov-2', name: 'Dua' },
