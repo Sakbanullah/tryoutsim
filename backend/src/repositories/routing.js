@@ -2,9 +2,8 @@
  * The single `ai_routing` row (DATABASE_SCHEMA §2; AI_PROVIDER_ARCHITECTURE §4).
  *
  * The row is created on first write. `defaultProviderId` has no FK in the
- * schema (the review records `SET NULL` as the intended action), so a stale id
- * is possible after a provider delete; the write path prunes overrides that name
- * a provider that does not exist.
+ * schema, so a stale id is possible after a provider delete; the resolver reports
+ * it as `provider_missing` and never falls back to another provider.
  */
 
 import { decodeStoredRouting, encodeStoredRouting } from '../domain/routing.js';

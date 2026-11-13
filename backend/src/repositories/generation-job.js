@@ -26,7 +26,7 @@ import {
   toJobReport,
 } from '../domain/generation.js';
 import { failureCategoryForError } from '../domain/provider-errors.js';
-import { isPairTested, resolveRoute } from '../domain/routing.js';
+import { isPairTested, resolveGlobalRoute } from '../domain/routing.js';
 import { scrub } from '../domain/scrub.js';
 import { QUESTION_PROMPT, buildQuestionMessages } from '../prompts/question.v1.js';
 import { raise } from './notification.js';
@@ -72,20 +72,25 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
   const active = new Set();
 
   /**
-   * The `question` task route, with the tested-pair rule applied
-   * (AI_PROVIDER_ARCHITECTURE §4–§5; PROVIDER_INTEGRATION §2.1).
+   * The one global model, with the tested-pair rule applied
+   * (AI_PROVIDER_ARCHITECTURE §4–§5; PROVIDER_INTEGRATION §2.1). Every task uses
+   * this same route; nothing here reads a per-task model.
    * @returns {Promise<{provider: object, modelId: string}>}
    */
-  async function resolveQuestionRoute() {
-    const resolved = resolveRoute(await loadRouting(), 'question');
+  async function resolveGlobalModel() {
+    const providers = await prisma.provider.findMany({ select: { id: true } });
+    const resolved = resolveGlobalRoute(await loadRouting(), new Set(providers.map((p) => p.id)));
     if (resolved.status === 'unmapped') {
-      throw conflict('generation_job', 'task_unmapped', 'No provider is routed for question generation.');
+      throw conflict(
+        'generation_job',
+        resolved.effect === 'provider_missing' ? 'provider_missing' : 'global_model_unset',
+        resolved.effect === 'provider_missing'
+          ? 'The provider of the global model no longer exists.'
+          : 'No global AI model is selected.',
+      );
     }
     const provider = await prisma.provider.findUnique({ where: { id: resolved.route.providerId } });
-    if (provider === null) {
-      throw conflict('generation_job', 'task_unmapped', 'The routed provider no longer exists.');
-    }
-    if (!isPairTested(provider, resolved.route.modelId)) {
+    if (provider === null || !isPairTested(provider, resolved.route.modelId)) {
       throw conflict('generation_job', 'provider_untested', 'Test this provider and model before generating.');
     }
     return { provider, modelId: resolved.route.modelId };
@@ -116,7 +121,7 @@ export function createGenerationService({ prisma, seams, loadRouting, logger = c
    * @returns {Promise<{jobId: string}>}
    */
   async function createJob({ competencyIds, count }) {
-    const { provider, modelId } = await resolveQuestionRoute();
+    const { provider, modelId } = await resolveGlobalModel();
     const maxContext = readCapability(provider, 'maxContext');
     const sizes = planBatches({ count, maxContext: typeof maxContext === 'number' ? maxContext : null });
     const jobId = newId();

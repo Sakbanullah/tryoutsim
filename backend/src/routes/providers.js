@@ -138,33 +138,28 @@ export function registerProviderRoutes(router, { prisma, providerStore, fetchImp
     return { data: view(await providerStore.setCapabilities(params.id, patch)) };
   });
 
-  /** The one global default plus per-task overrides (200). */
+  /** The one global model, `null` when none is set (200). */
   router.add('GET', '/ai-routing', async () => ({ data: toWireRouting(await load()) }));
 
-  /** Set the default and/or overrides; every named provider must exist (200, 400, 404). */
+  /**
+   * Set the global model. There are no per-task routes: any field other than
+   * `default` is refused; a body without `default` leaves it untouched
+   * (200, 400).
+   */
   router.add('PUT', '/ai-routing', async ({ body }) => {
     const raw = asObject(body);
     const input = parseRoutingBody(raw);
     const existing = await load();
 
-    // A body that does not name a route keeps the stored one.
     /** @type {import('../domain/routing.js').Routing} */
-    const merged = {
-      default: 'default' in raw ? input.default : existing.default,
-      perTask: { ...existing.perTask, ...input.perTask },
-    };
+    const merged = { default: 'default' in raw ? input.default : existing.default };
 
-    /** @type {{path: string, message: string, rule: string}[]} */
-    const missing = [];
-    /** @param {{providerId: string} | null | undefined} route @param {string} path */
-    const check = async (route, path) => {
-      if (!route) return;
-      const provider = await prisma.provider.findUnique({ where: { id: route.providerId } });
-      if (provider === null) missing.push({ path: `${path}.providerId`, message: 'Provider does not exist.', rule: 'exists' });
-    };
-    await check(merged.default, 'default');
-    for (const task of Object.keys(input.perTask)) await check(merged.perTask[task], `perTask.${task}`);
-    if (missing.length > 0) throw validationError(missing);
+    if (merged.default !== null) {
+      const provider = await prisma.provider.findUnique({ where: { id: merged.default.providerId } });
+      if (provider === null) {
+        throw validationError([{ path: 'default.providerId', message: 'Provider does not exist.', rule: 'exists' }]);
+      }
+    }
 
     await saveRouting(prisma, merged);
     return { data: toWireRouting(await load()) };
