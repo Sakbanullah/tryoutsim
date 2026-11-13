@@ -4,12 +4,13 @@ import type { ModelCapabilities, ProviderView } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
 import { useApi } from '../shared/useApi'
 import { actionMessage, useAction } from '../shared/useAction'
-import { Badge, Button, Dialog, Field, Notice, Panel, Skeleton, controlClass } from '../../ui/ui'
+import { Badge, Button, Dialog, Field, Notice, Panel, controlClass } from '../../ui/ui'
 import { Block, PageHeader } from '../../ui/page'
 import { BackLink } from '../../shell/Layout'
 import { useFlash } from '../../state/shell'
 import { IconAlert, IconCheck, IconPlug, IconRefresh, IconSparkle } from '../../ui/icons'
 import { providerTestText } from './providerTestText'
+import { ModelPicker } from './ModelPicker'
 
 /**
  * Pengaturan AI (`/lainnya/ai`) — PAGE_SPECIFICATIONS §15.
@@ -215,7 +216,7 @@ function ProviderCard({
           label="Model default"
           error={action.fieldErrors.defaultModel}
           className="sm:col-span-2"
-          hint="Dipakai uji koneksi dan routing. Menyimpan model lain membatalkan status teruji, jadi uji lagi setelahnya."
+          hint="Satu model untuk seluruh tugas AI. Dipakai uji koneksi dan semua pembuatan soal. Menyimpan model lain membatalkan status teruji, jadi uji lagi setelahnya."
         >
           {({ id, describedBy, invalid }) => (
             <input
@@ -294,21 +295,39 @@ function ProviderCard({
  * A provider's models, inside its own card. `POST /providers/:id/models` asks the endpoint
  * (`GET /v1/models` for OpenAI-compatible providers) and stores the answer on the provider row, so the
  * rows survive a reload; they are always the endpoint's answer, never a static list.
+ * Picking one sets the single global model every AI task uses — there is no per-task picker.
  */
 function ProviderModels({ provider, onChanged }: { provider: ProviderView; onChanged: () => void }) {
   const action = useAction()
-  const [savingModel, setSavingModel] = useState<string | null>(null)
-  const models = provider.models ?? []
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const flash = useFlash()
+  const models: string[] = provider.models ?? []
+  const loadError = action.failure ? actionMessage(action.failure) : null
 
   /**
-   * Make a listed model the provider's default (AI_PROVIDER_ARCHITECTURE §5: the list is a picker, the typed id stays
-   * available). The route clears the recorded test on a model change, so the card reloads and a new test is due.
+   * Make a listed model the provider's default — and, because the app uses one global model, the model of every AI task
+   * (AI_PROVIDER_ARCHITECTURE §4, product decision: one global model). The provider save runs first so the server never
+   * routes to an untested pair; then the global default follows it. A failure at either step keeps the previous model.
    */
   async function makeDefault(modelId: string) {
-    setSavingModel(modelId)
-    const res = await action.run(() => api.updateProvider(provider.id, { defaultModel: modelId }))
-    setSavingModel(null)
-    if (res !== null) onChanged()
+    if (saving) return
+    setSaving(true)
+    setSaveError(null)
+    const providerSaved = await api.updateProvider(provider.id, { defaultModel: modelId })
+    if (!providerSaved.ok) {
+      setSaving(false)
+      setSaveError(actionMessage(toOutcome(providerSaved.failure)))
+      return
+    }
+    const routing = await api.saveRouting({ default: { providerId: provider.id, modelId } })
+    setSaving(false)
+    if (!routing.ok) {
+      setSaveError(actionMessage(toOutcome(routing.failure)))
+      return
+    }
+    onChanged()
+    flash({ kind: 'info', text: `Model AI ${modelId} dipakai seluruh tugas.` })
   }
 
   /** Ask the endpoint for its model list. An empty answer is a real empty list, never a fallback. */
@@ -320,52 +339,30 @@ function ProviderModels({ provider, onChanged }: { provider: ProviderView; onCha
 
   return (
     <div className="mt-4 border-t border-border pt-4">
-      <Block title="Models" hint={`Daftar dari ${provider.baseUrl}/models.`}>
-        <div className="flex flex-wrap items-center gap-2">
+      <Block title="Model" hint={`Daftar dari ${provider.baseUrl}/models.`}>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-0 flex-1">
+            <ModelPicker
+              providerId={provider.id}
+              models={models}
+              value={provider.defaultModel}
+              loaded={provider.models !== undefined}
+              loading={action.busy}
+              loadError={action.busy ? null : loadError}
+              saving={saving}
+              saveError={saveError}
+              onLoad={() => void load()}
+              onSelect={(modelId) => void makeDefault(modelId)}
+            />
+          </div>
           <Button variant="secondary" size="sm" onClick={() => void load()} disabled={action.busy}>
             <IconSparkle size={15} />
             {action.busy ? 'Memuat…' : 'Muat daftar model'}
           </Button>
-          <span className="text-sm text-muted tabular-nums">{models.length} model</span>
         </div>
-
-        <div className="mt-3" aria-live="polite">
-          {action.busy ? <Skeleton lines={3} /> : null}
-          {action.failure ? (
-            <Notice tone="danger" title="Gagal memuat daftar model">
-              {actionMessage(action.failure)}
-            </Notice>
-          ) : null}
-          {!action.busy && !action.failure ? (
-            models.length > 0 ? (
-              <ul aria-label={`Model ${provider.name}`} className="divide-y divide-border rounded-[12px] border border-border">
-                {models.map((m) => (
-                  <li key={`${provider.id}:${m}`} className="flex items-center justify-between gap-3 px-3 py-2">
-                    <span className="block min-w-0 truncate text-md font-medium" title={m}>
-                      {m}
-                    </span>
-                    {m === provider.defaultModel ? (
-                      <Badge tone="success">Default</Badge>
-                    ) : (
-                      <Button
-                        variant="quiet"
-                        size="sm"
-                        onClick={() => void makeDefault(m)}
-                        disabled={action.busy || savingModel !== null}
-                      >
-                        Jadikan default
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-muted">
-                {provider.models ? 'Endpoint tidak mengembalikan model.' : 'Daftar model belum dimuat.'}
-              </p>
-            )
-          ) : null}
-        </div>
+        <p className="mt-2 text-sm text-muted tabular-nums" aria-live="polite">
+          {models.length} model tersedia{provider.defaultModel ? ` · default ${provider.defaultModel} untuk semua tugas AI` : ''}
+        </p>
       </Block>
     </div>
   )
