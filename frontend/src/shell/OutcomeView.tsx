@@ -1,7 +1,31 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import type { Load } from '../features/shared/useApi'
-import { ErrorState, Skeleton } from '../ui/ui'
+import { ErrorState, Skeleton, buttonClass } from '../ui/ui'
 import { Panel } from '../ui/ui'
+
+/** A plain-language message for one conflict reason (API_SPECIFICATION §4). */
+export 
+/**
+ * A conflict keeps its retry, except `already_submitted`: retrying cannot succeed, so the one useful action is the
+ * session's own result page — the session id the caller was working with, never a guessed one.
+ */
+function ConflictState({ reason, resultHref, retry }: { reason: string; resultHref?: string; retry?: () => void }) {
+  if (reason === 'already_submitted' && resultHref !== undefined) {
+    return (
+      <div
+        role="alert"
+        className="flex flex-col gap-3 rounded-[24px] border border-border bg-surface px-6 py-7 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p className="text-md leading-relaxed">{conflictMessage(reason)}</p>
+        <Link to={resultHref} className={`${buttonClass('primary')} shrink-0`}>
+          Buka halaman hasil
+        </Link>
+      </div>
+    )
+  }
+  return <ErrorState message={conflictMessage(reason)} retry={retry} />
+}
 
 /**
  * Renders the four screen states once (FRONTEND_STATE_MANAGEMENT §6). Each failure the registry can
@@ -12,11 +36,14 @@ export function OutcomeView<T>({
   retry,
   children,
   loadingLines = 4,
+  resultHref,
 }: {
   state: Load<T>
   retry?: () => void
   children: (data: T) => ReactNode
   loadingLines?: number
+  /** The screen's own result link, offered when the backend reports `already_submitted` (see `ConflictState`). */
+  resultHref?: string
 }) {
   if (state.phase === 'loading') {
     return (
@@ -57,7 +84,7 @@ export function OutcomeView<T>({
     case 'provider':
       return <ErrorState message={providerMessage(o.code)} retry={retry} />
     case 'conflict':
-      return <ErrorState message={conflictMessage(o.reason)} retry={retry} />
+      return <ConflictState reason={o.reason} resultHref={resultHref} retry={retry} />
     case 'blocked':
       return <ErrorState message="Sesi ini tersimpan, tetapi belum dinilai." retry={retry} />
     case 'preflight':

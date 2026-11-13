@@ -6,30 +6,18 @@ export type Failure =
   | { status: 404; code: 'NOT_FOUND'; what: string }
   | { status: 409; code: 'CONFLICT'; reason: string }
   | { status: 422; code: 'PREFLIGHT_FAILED'; errors: PreflightError[] }
-  | {
-      status: 409
-      code: 'APPROVAL_MISSING' | 'APPROVAL_INVALID' | 'APPROVAL_VERSION_MISMATCH' | 'THRESHOLD_CONFIG_INVALID'
-      changed: ChangeEntry[]
-    }
+  /** A genuine block (API_SPECIFICATION §4). The approval codes are not here: a 200 result withholds its verdict. */
+  | { status: 409; code: 'THRESHOLD_CONFIG_INVALID'; changed: ChangeEntry[] }
   | { status: 426; code: 'CONTRACT_MISMATCH'; expected: string; actual: string }
   | { status: 429 | 502 | 504; code: ErrorCode; message: string; retryAfterMs: number | null }
   | { status: 0; code: 'NETWORK'; message: string }
   /** A documented route the backend does not serve yet (plan Tahap A). Distinct from `NETWORK`: retrying cannot help. */
   | { status: 0; code: 'UNSUPPORTED'; message: string }
 
-const BLOCKING = [
-  'APPROVAL_MISSING',
-  'APPROVAL_INVALID',
-  'APPROVAL_VERSION_MISMATCH',
-  'THRESHOLD_CONFIG_INVALID',
-] as const satisfies ReadonlyArray<ErrorCode>
-
-type BlockingCode = (typeof BLOCKING)[number]
-const isBlocking = (code: ErrorCode): code is BlockingCode => (BLOCKING as ReadonlyArray<ErrorCode>).includes(code)
 
 /**
- * Turns a route failure into the discriminated `Outcome` screens branch on.
- * A blocking code without `changed[]` is still blocking — the mobile UI explains it without a diff.
+ * Turns a route failure into the discriminated `Outcome` screens branch on. Only genuine blocks reach here: a
+ * withheld verdict is a `200` `ScoreResult` (`withheld`), never a failure (FRONTEND_DATA_CONTRACTS §5).
  */
 export function toOutcome<T>(failure: Failure): Outcome<T> {
   if (failure.status === 400 && failure.code === 'VALIDATION_FAILED') {
@@ -39,7 +27,7 @@ export function toOutcome<T>(failure: Failure): Outcome<T> {
   if (failure.status === 409 && 'reason' in failure) {
     return { kind: 'conflict', reason: failure.reason }
   }
-  if (failure.status === 409 && isBlocking(failure.code)) {
+  if (failure.status === 409 && failure.code === 'THRESHOLD_CONFIG_INVALID') {
     return { kind: 'blocked', code: failure.code, changed: failure.changed }
   }
   if (failure.status === 422) return { kind: 'preflight', errors: failure.errors }

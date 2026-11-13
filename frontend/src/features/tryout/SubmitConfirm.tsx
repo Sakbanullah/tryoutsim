@@ -18,14 +18,15 @@ export default function SubmitConfirm() {
   const { sessionId = '' } = useParams()
   const session = useApi<SessionDetail>(() => api.session(sessionId), [sessionId])
   return (
-    <OutcomeView state={session.state} retry={session.retry}>
+    <OutcomeView state={session.state} retry={session.retry} resultHref={resultPath('tryout', sessionId)}>
       {(detail) =>
         detail.status !== 'open' ? (
-          <Notice tone="info" title="Sesi ini sudah dikirim">
-            <Link className="font-semibold underline" to={resultPath('tryout', sessionId)}>
-              Lihat hasil
+          <Panel tone="flat" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <span className="text-md font-medium">Sesi ini sudah dikirim; jawabannya tidak bisa diubah lagi.</span>
+            <Link to={resultPath('tryout', sessionId)} className={buttonClass('primary')}>
+              Buka halaman hasil
             </Link>
-          </Notice>
+          </Panel>
         ) : (
           <ConfirmBody detail={detail} />
         )

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../../data'
-import type { QuestionScore, ReviewQuestion, ScoreResult, SessionDetail, Test } from '../../types/contracts'
+import type { QuestionScore, ReviewQuestion, ScoreResult, SessionDetail, Test, ThresholdVerdict } from '../../types/contracts'
 import { OutcomeView } from '../../shell/OutcomeView'
 import { useApi } from '../shared/useApi'
 import { Badge, Button, Figure, Notice, Panel, PointsBar, buttonClass } from '../../ui/ui'
 import { tierLabel } from '../shared/badges'
+import { bandFor, withheldText } from './resultStatus'
 import { readLastConfigId, writeLastResultPointer } from '../shared/format'
 import { useFlash } from '../../state/shell'
 import { PageHeader } from '../../ui/page'
@@ -149,13 +150,7 @@ function ResultBody({
             })}
           </div>
 
-          {score.thresholds.mode === 'none' ? (
-            <Notice tone="lavender" title="Ambang batas">
-              Konfigurasi ini belum menetapkan ambang batas, jadi belum ada penilaian ambang batas.
-            </Notice>
-          ) : (
-            <ThresholdBlock score={score} />
-          )}
+          <ThresholdBand score={score} />
 
           {score.approval ? (
             <p className="text-sm leading-relaxed text-muted">
@@ -248,10 +243,37 @@ const TEST_NAME: Record<Test, string> = {
   TKP: 'Situasi dan Perilaku Kerja',
 }
 
-/** Thresholds: a verdict only where `ThresholdEvaluation` actually carries one (§3). */
-function ThresholdBlock({ score }: { score: ScoreResult }) {
-  const t = score.thresholds
-  if (t.mode === 'none') return null
+/** The threshold band `bandFor` names, rendered (resultStatus.ts owns the decision). */
+function ThresholdBand({ score }: { score: ScoreResult }) {
+  const band = bandFor(score)
+  if (band.kind === 'no_rule') {
+    return (
+      <Notice tone="lavender" title="Ambang batas">
+        Konfigurasi ini belum menetapkan ambang batas, jadi belum ada penilaian ambang batas.
+      </Notice>
+    )
+  }
+  if (band.kind === 'withheld') {
+    // The score exists; only the verdict is withheld (API_SPECIFICATION §4). Never shown as "no threshold".
+    return (
+      <Notice tone="warning" title="Verdict ditahan">
+        {withheldText(band.code)} Skor di atas tetap tersimpan dan tidak berubah.
+      </Notice>
+    )
+  }
+  if (band.kind === 'undecided') {
+    return (
+      <Notice tone="lavender" title="Ambang batas">
+        Konfigurasi ini menetapkan ambang batas, tetapi belum ada verdict untuk sesi ini.
+      </Notice>
+    )
+  }
+  return score.verdict !== null ? <ThresholdVerdictBlock verdict={score.verdict} /> : null
+}
+
+/** The threshold verdict the backend carried as `verdict` (SCORING_METHODOLOGY §5.4). */
+function ThresholdVerdictBlock({ verdict }: { verdict: ThresholdVerdict }) {
+  const t = verdict
   return (
     <Panel className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">

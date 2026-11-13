@@ -74,9 +74,8 @@ function toFailure(status: number, body: unknown, retryAfter: string | null): Fa
       return { status: 409, code, reason: details?.reason ?? 'unknown' }
     case 'PREFLIGHT_FAILED':
       return { status: 422, code, errors: details?.errors ?? [] }
-    case 'APPROVAL_MISSING':
-    case 'APPROVAL_INVALID':
-    case 'APPROVAL_VERSION_MISMATCH':
+    // The approval codes are verdict-only: the backend carries them on a 200 result as `withheld`, never as an
+    // error (API_SPECIFICATION §4). Only THRESHOLD_CONFIG_INVALID is a genuine block.
     case 'THRESHOLD_CONFIG_INVALID':
       return { status: 409, code, changed: details?.changed ?? [] }
     case 'RATE_LIMITED':
@@ -91,7 +90,8 @@ function toFailure(status: number, body: unknown, retryAfter: string | null): Fa
       }
     default:
       if (status === 409) {
-        return { status: 409, code: 'APPROVAL_INVALID', changed: details?.changed ?? [] }
+        // An unlisted 409 is a contract surprise, not an approval block: report it as the conflict it is.
+        return { status: 409, code: 'CONFLICT', reason: details?.reason ?? 'unknown' }
       }
       if (status === 426) {
         return { status: 426, code: 'CONTRACT_MISMATCH', expected: '1', actual: error?.message ?? 'unknown' }
@@ -180,12 +180,19 @@ function toReport(raw: Wire): QuestionReport {
 }
 
 /**
- * Backend `ScoreResult` → the screen's type. The backend keeps the threshold evaluation apart as `verdict` (§5.6);
- * `verdict: null` means no verdict exists, rendered as `{ mode: 'none' }` — never a pass or fail the UI would invent.
+ * Backend `ScoreResult` → the screen's type (API_SPECIFICATION §5, FRONTEND_DATA_CONTRACTS §5). Every field is kept as
+ * the backend sent it: `thresholds` is the threshold rule the snapshot carried, `verdict` the threshold verdict (or
+ * `null`), and `withheld` says why a verdict is absent — a withheld verdict is a result, not an error. `thresholds`
+ * is never replaced by `verdict`, so a withheld verdict cannot render as "no threshold set".
  */
 function toScoreResult(raw: Wire): ScoreResult {
-  const { verdict, ...score } = raw
-  return { ...score, thresholds: verdict ?? { mode: 'none' } } as ScoreResult
+  const { verdict, withheld } = raw
+  return {
+    ...raw,
+    thresholds: raw.thresholds ?? { mode: 'none' },
+    verdict: verdict ?? null,
+    withheld: withheld ?? null,
+  } as ScoreResult
 }
 
 /** The manual-create body of `POST /questions` in the row's own field names (routes/questions.js). */

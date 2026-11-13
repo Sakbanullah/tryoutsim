@@ -48,7 +48,8 @@ export function DevPanel() {
 
 const TOGGLES: Array<{ value: ErrorToggle; label: string }> = [
   { value: 'none', label: 'Normal' },
-  { value: 'approval_missing', label: 'Submit tanpa persetujuan' },
+  // Verdict-only: the session scores and the result withholds its verdict (API_SPECIFICATION §4) — it is not an error.
+  { value: 'approval_missing', label: 'Hasil dengan verdict ditahan (tanpa persetujuan)' },
   { value: 'preflight', label: 'Submit ditolak preflight' },
   { value: 'contract', label: 'Versi kontrak tidak cocok' },
 ]

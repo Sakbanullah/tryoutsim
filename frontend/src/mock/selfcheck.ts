@@ -17,6 +17,8 @@ import type {
   ScoreResult,
   Test,
   ThresholdEvaluation,
+  ThresholdVerdict,
+  VerdictWithheld,
 } from '../types/contracts'
 
 export type FixtureAnswer = { questionId: string; selected: string | null }
@@ -28,6 +30,10 @@ export type ScoreRequest = {
   scoringVersion: number
   approval: ProvisionalApproval | null
   thresholds: ThresholdEvaluation
+  /** The threshold verdict, or `null` for no verdict — withheld or no thresholds (SCORING_METHODOLOGY §5.4). */
+  verdict?: ThresholdVerdict | null
+  /** Why a verdict is withheld; `null` otherwise (API_SPECIFICATION §4). */
+  withheld?: VerdictWithheld | null
   roster: Question[]
   answers: FixtureAnswer[]
 }
@@ -80,6 +86,8 @@ export function buildScoreResult(req: ScoreRequest): ScoreResult {
     byCompetency,
     byQuestion,
     thresholds: req.thresholds,
+    verdict: req.verdict ?? null,
+    withheld: req.withheld ?? null,
   }
 }
 
@@ -127,6 +135,9 @@ export function checkScoreResult(result: ScoreResult, roster: Question[]): void 
   if (result.thresholds.mode === 'none') {
     assert(!('passed' in result.thresholds), 'mode none carries no verdict')
   }
+  // A verdict and a withheld reason never coexist, and a withheld reason always means no verdict (API_SPECIFICATION §4).
+  assert(!(result.verdict !== null && result.withheld !== null), 'a withheld verdict carries no verdict')
+  if (result.withheld !== null) assert(result.verdict === null, 'withheld implies verdict null')
 }
 
 /** Answers as the submit route would receive them, in roster order. */
