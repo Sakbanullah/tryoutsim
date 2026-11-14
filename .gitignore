@@ -1,5 +1,8 @@
 # Local, single-user app — ignore nothing sensitive is committed.
 
+# Markdown — code-only working tree. Already tracked docs stay tracked.
+*.md
+
 # OS / editor
 .DS_Store
 Thumbs.db
