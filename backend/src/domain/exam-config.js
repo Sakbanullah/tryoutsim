@@ -55,12 +55,13 @@ export function toScoringRules(config) {
 
 /**
  * The exam config as `GET /exam-configs/:id` returns it (CPNS_2026_REGULATIONS §4.1), plus the management-only
- * `approval` block (newest approval or `null`) and whether a threshold verdict is possible (API_ENDPOINTS §2).
+ * `approval` block (the one binding this version, or `null`), the `acknowledgements` the management UI must render
+ * instead of carrying its own copy, and whether a threshold verdict is possible (API_ENDPOINTS §2).
  * @param {object} input
  * @param {object} input.config `exam_config` row
  * @param {object[]} input.basisRefs `basis_ref` rows, in id order
  * @param {object | null} input.thresholds `thresholds` row
- * @param {object | null} input.approval newest `provisional_approval` row for this config version
+ * @param {object | null} input.approval `provisional_approval` row for this `(configId, configVersion)`
  * @returns {object}
  */
 export function toExamConfig({ config, basisRefs, thresholds, approval }) {
@@ -83,6 +84,7 @@ export function toExamConfig({ config, basisRefs, thresholds, approval }) {
     scoring: toScoringRules(config),
     thresholds: toThresholdSet(thresholds),
     notice: config.notice,
+    acknowledgements: acknowledgementsFor(config),
     approval,
     thresholdVerdictPossible: verdictPossible(config, thresholds, approval),
   };
@@ -120,6 +122,30 @@ export function verdictPossible(config, thresholds, approval) {
   return approval.configVersion === config.configVersion
     && approval.scoringVersion === config.scoringVersion
     && approval.regulatoryBasisHash === config.regulatoryBasisHash;
+}
+
+/**
+ * The `UNV-*` findings that stand against a config until a human acknowledges them, and the prose shown with each
+ * (CPNS_2026_REGULATIONS §7.2). This fixed list is the *only* source: the set is never derived by scanning `notice`,
+ * a basis ref title or any other free text, so an edit to prose can never add or remove a required acknowledgement.
+ * @type {ReadonlyArray<{id: string, text: string}>}
+ */
+export const ACKNOWLEDGEMENT_WARNINGS = Object.freeze([
+  { id: 'UNV-03', text: 'Jumlah dan bobot soal 2026 belum diputuskan; keduanya diwarisi dari Kepmen PANRB 321/2024 yang bersifat historis.' },
+  { id: 'UNV-04', text: 'Ambang batas CPNS 2026 belum ditetapkan, sehingga kelulusan tidak dapat dinilai.' },
+  { id: 'UNV-05', text: 'Durasi ujian CPNS 2026 belum ditetapkan.' },
+  { id: 'UNV-09', text: 'Permen PANRB 6/2024 berlaku sebagai aturan yang masih berlaku, bukan aturan khusus seleksi 2026.' },
+  { id: 'UNV-10', text: 'Konfigurasi ini berstatus sementara dan belum diverifikasi sebagai ketentuan resmi CPNS 2026.' },
+]);
+
+/**
+ * The warnings a caller must acknowledge for this config: the fixed list while the config is `provisional`, and
+ * nothing once it is not (an `official_verified` config is not approved, so it needs no acknowledgement either).
+ * @param {{state: string}} config
+ * @returns {Array<{id: string, text: string}>} in `ACKNOWLEDGEMENT_WARNINGS` order; `[]` for a non-provisional config
+ */
+export function acknowledgementsFor(config) {
+  return config.state === 'provisional' ? ACKNOWLEDGEMENT_WARNINGS.map((warning) => ({ ...warning })) : [];
 }
 
 /** Parse a stored JSON column, returning `null` rather than throwing on malformed content. */
